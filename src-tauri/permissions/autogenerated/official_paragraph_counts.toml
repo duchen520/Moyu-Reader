@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-paragraph-counts"
+description = "Enables the official_paragraph_counts command without any pre-configured scope."
+commands.allow = ["official_paragraph_counts"]
+
+[[permission]]
+identifier = "deny-official-paragraph-counts"
+description = "Denies the official_paragraph_counts command without any pre-configured scope."
+commands.deny = ["official_paragraph_counts"]

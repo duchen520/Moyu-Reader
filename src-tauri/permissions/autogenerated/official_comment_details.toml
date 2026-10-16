@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-comment-details"
+description = "Enables the official_comment_details command without any pre-configured scope."
+commands.allow = ["official_comment_details"]
+
+[[permission]]
+identifier = "deny-official-comment-details"
+description = "Denies the official_comment_details command without any pre-configured scope."
+commands.deny = ["official_comment_details"]

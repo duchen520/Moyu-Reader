@@ -1,0 +1,2 @@
+{"time_utc": "2026-10-14T13:34:48Z", "method": "GET", "host": "api.fanqiesdk.com", "path": "/feoffline/novel_pack/page/audio_play.html", "purpose": "inspect existing official playback-page link", "attempts": 1, "http_status": 200, "bytes": 2310}
+{"time_utc": "2026-10-14T13:36:43Z", "method": "GET", "host": "lf-cdn-tos.bytescm.com", "path": "/obj/static/toutiao/feoffline/novel_pack/js/audio_play_583273ca.js", "purpose": "inspect official playback script referenced by retained page", "attempts": 1, "http_status": 200, "bytes": 23693}

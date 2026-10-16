@@ -1,0 +1,19 @@
+{
+  "version": "0.4.3",
+  "date": "2026-10-15",
+  "automaticUpload": false,
+  "explicitUploadConfirmation": true,
+  "readOnlyHistoryVerifiedWithRealAccount": true,
+  "realAccountUploadTested": false,
+  "installerSha256": "5646aa430cb59598593434dc4853fd56e30de5bf2bfb4e0da319e1db945850a8",
+  "installedSha256": "9ffe75c89fe5a32b3e8ad030da88c18e63896e2611259f5bfb5fa1ffe266b0d7",
+  "checks": {
+    "speech": 5,
+    "audioProgress": 2,
+    "ui": 20,
+    "extras": 11,
+    "regressions": 15,
+    "backend": 23,
+    "native": 4
+  }
+}

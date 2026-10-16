@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-bookshelf"
+description = "Enables the official_bookshelf command without any pre-configured scope."
+commands.allow = ["official_bookshelf"]
+
+[[permission]]
+identifier = "deny-official-bookshelf"
+description = "Denies the official_bookshelf command without any pre-configured scope."
+commands.deny = ["official_bookshelf"]

@@ -1,0 +1,5 @@
+Tomato Reader 0.4.0 is distributed under GPL-3.0-only.
+App protocol signing, normal session encoding and media handling reference naiyQAQ/fanqie-assistant commit b62ec5dbe6149a93bca249949549c805ac7da424 (GPL-3.0). Rust port and integration modified 2026-10-15.
+Complete corresponding source is provided alongside the installer.
+Original: https://github.com/naiyQAQ/fanqie-assistant
+Other dependencies retain their licenses: React MIT; Tauri MIT/Apache-2.0; RustCrypto MIT/Apache-2.0; reqwest MIT/Apache-2.0.

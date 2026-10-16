@@ -1,0 +1,18 @@
+{
+  "fresh_native_registration": true,
+  "chapter_order": 50,
+  "chapter_paragraphs": 127,
+  "book_review_pages": [
+    20,
+    20
+  ],
+  "visible_replies": 1,
+  "media_bytes": 4506128,
+  "media_duration_seconds": 719.688957,
+  "codec": "aac",
+  "decoded_pcm_seconds": 8,
+  "decoded_pcm_sha256": "e5069048d9ae552ec61048b1ef465103a9328e1b2c74ed8c5bf9e7f9cc2c35e4",
+  "windows_device_tested": false,
+  "live_account_tested": false,
+  "browser_ui_rerun": "blocked by execution environment socket permissions"
+}

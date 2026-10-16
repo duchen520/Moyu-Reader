@@ -1,0 +1,19 @@
+{
+  "version": "0.4.2",
+  "date": "2026-10-15",
+  "installedPath": "D:\\Tomato Reader\\tomato-reader.exe",
+  "installedSha256": "11003ce54cfcdca12192cac49ed8cf8dd8b450e6e564f2ccf84151ca60bbdbd1",
+  "installerSha256": "498458713e288a8609705a32d7a625968ec38f12c4531bbf947162a572e601cf",
+  "checks": {
+    "speech": 5,
+    "audioProgress": 2,
+    "ui": 20,
+    "extras": 11,
+    "regressions": 7,
+    "backend": 18,
+    "native": 3
+  },
+  "installedNativeRetest": true,
+  "nativeOfficialAccountVerified": false,
+  "nativeOfficialAudioVerified": false
+}

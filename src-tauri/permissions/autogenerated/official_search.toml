@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-search"
+description = "Enables the official_search command without any pre-configured scope."
+commands.allow = ["official_search"]
+
+[[permission]]
+identifier = "deny-official-search"
+description = "Denies the official_search command without any pre-configured scope."
+commands.deny = ["official_search"]

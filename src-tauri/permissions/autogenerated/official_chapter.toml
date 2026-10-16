@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-chapter"
+description = "Enables the official_chapter command without any pre-configured scope."
+commands.allow = ["official_chapter"]
+
+[[permission]]
+identifier = "deny-official-chapter"
+description = "Denies the official_chapter command without any pre-configured scope."
+commands.deny = ["official_chapter"]

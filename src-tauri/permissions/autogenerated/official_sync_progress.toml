@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-sync-progress"
+description = "Enables the official_sync_progress command without any pre-configured scope."
+commands.allow = ["official_sync_progress"]
+
+[[permission]]
+identifier = "deny-official-sync-progress"
+description = "Denies the official_sync_progress command without any pre-configured scope."
+commands.deny = ["official_sync_progress"]

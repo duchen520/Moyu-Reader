@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-audio-play"
+description = "Enables the official_audio_play command without any pre-configured scope."
+commands.allow = ["official_audio_play"]
+
+[[permission]]
+identifier = "deny-official-audio-play"
+description = "Denies the official_audio_play command without any pre-configured scope."
+commands.deny = ["official_audio_play"]

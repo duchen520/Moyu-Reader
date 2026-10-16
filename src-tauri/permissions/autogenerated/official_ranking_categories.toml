@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-ranking-categories"
+description = "Enables the official_ranking_categories command without any pre-configured scope."
+commands.allow = ["official_ranking_categories"]
+
+[[permission]]
+identifier = "deny-official-ranking-categories"
+description = "Denies the official_ranking_categories command without any pre-configured scope."
+commands.deny = ["official_ranking_categories"]

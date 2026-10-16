@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-paragraph-comments"
+description = "Enables the official_paragraph_comments command without any pre-configured scope."
+commands.allow = ["official_paragraph_comments"]
+
+[[permission]]
+identifier = "deny-official-paragraph-comments"
+description = "Denies the official_paragraph_comments command without any pre-configured scope."
+commands.deny = ["official_paragraph_comments"]

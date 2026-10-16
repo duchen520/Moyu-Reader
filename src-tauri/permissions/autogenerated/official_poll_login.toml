@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-poll-login"
+description = "Enables the official_poll_login command without any pre-configured scope."
+commands.allow = ["official_poll_login"]
+
+[[permission]]
+identifier = "deny-official-poll-login"
+description = "Denies the official_poll_login command without any pre-configured scope."
+commands.deny = ["official_poll_login"]

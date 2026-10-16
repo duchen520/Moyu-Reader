@@ -1,0 +1,38 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Local UI only; official remote windows have no native command permissions.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "allow-official-account",
+    "allow-official-start-login",
+    "allow-official-poll-login",
+    "allow-official-cancel-login",
+    "allow-official-logout",
+    "allow-official-bookshelf",
+    "allow-official-book",
+    "allow-official-chapter",
+    "allow-official-read-progress",
+    "allow-official-read-history",
+    "allow-official-sync-progress",
+    "allow-official-comments",
+    "allow-official-search",
+    "allow-official-ranking-categories",
+    "allow-official-rankings",
+    "allow-official-comment-details",
+    "allow-official-audio-catalog",
+    "allow-official-audio-episodes",
+    "allow-official-audio-play",
+    "allow-official-tts-play",
+    "allow-official-audio-alignment",
+    "allow-official-paragraph-counts",
+    "allow-official-paragraph-comments",
+    "allow-official-paragraph-replies"
+  ]
+}

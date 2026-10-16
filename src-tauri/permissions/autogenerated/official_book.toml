@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-book"
+description = "Enables the official_book command without any pre-configured scope."
+commands.allow = ["official_book"]
+
+[[permission]]
+identifier = "deny-official-book"
+description = "Denies the official_book command without any pre-configured scope."
+commands.deny = ["official_book"]

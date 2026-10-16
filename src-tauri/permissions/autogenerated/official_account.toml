@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-account"
+description = "Enables the official_account command without any pre-configured scope."
+commands.allow = ["official_account"]
+
+[[permission]]
+identifier = "deny-official-account"
+description = "Denies the official_account command without any pre-configured scope."
+commands.deny = ["official_account"]

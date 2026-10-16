@@ -1,0 +1,41 @@
+{
+  "name": "tomato-reader-desktop",
+  "private": true,
+  "version": "0.5.9",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test:unit": "node scripts/test-unit.mjs",
+    "test:ui": "node scripts/test-ui.mjs",
+    "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib",
+    "test:extras": "node scripts/test-extras.mjs",
+    "test:regressions": "node scripts/test-audio-progress.cjs && node scripts/test-regressions.mjs",
+    "test:leaderboard": "node scripts/test-leaderboard-flow.mjs",
+    "test:fixes": "node scripts/test-050-fixes.mjs && node scripts/test-auto-upload.mjs",
+    "test:cloud": "node scripts/test-cloud-startup.mjs",
+    "test:scroll": "node scripts/test-scroll-performance.mjs",
+    "test:rankings": "node scripts/test-online-rankings.mjs",
+    "test:themes": "node scripts/test-themes.mjs",
+    "test:tts": "node scripts/test-official-tts.mjs",
+    "test:reader-features": "node scripts/test-reader-features.mjs",
+    "test:reading-controls": "node scripts/test-reading-controls.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "playwright": "1.51.1",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}

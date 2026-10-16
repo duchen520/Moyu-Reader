@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-audio-episodes"
+description = "Enables the official_audio_episodes command without any pre-configured scope."
+commands.allow = ["official_audio_episodes"]
+
+[[permission]]
+identifier = "deny-official-audio-episodes"
+description = "Denies the official_audio_episodes command without any pre-configured scope."
+commands.deny = ["official_audio_episodes"]

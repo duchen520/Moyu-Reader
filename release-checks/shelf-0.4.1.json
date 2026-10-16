@@ -1,0 +1,34 @@
+{
+  "version": "0.4.1",
+  "reported_by_user": {
+    "v040_windows_started": true,
+    "v040_login_succeeded": true,
+    "v040_manual_shelf_refresh_succeeded": true,
+    "audio_entry_visible": true,
+    "audio_output_confirmed": false
+  },
+  "public_cover_validation": {
+    "book_id": "7069948840148732967",
+    "metadata_code": 0,
+    "fields": [
+      "thumbUri",
+      "thumbUrl"
+    ],
+    "host": "p9-novel-sign.byteimg.com",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "bytes": 18125,
+    "dimensions": [
+      225,
+      300
+    ],
+    "decoded": true
+  },
+  "backend_checks_passed": 18,
+  "speech_checks_passed": 5,
+  "mock_ui_checks_passed": 20,
+  "extra_mock_ui_checks_passed": 11,
+  "user_cookie_accessed": false,
+  "phone_desktop_progress_verified": false,
+  "audio_cloud_sync_implemented": false
+}

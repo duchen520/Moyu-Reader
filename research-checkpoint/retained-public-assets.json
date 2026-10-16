@@ -1,0 +1,37 @@
+[
+  {
+    "name": "audio-h5.html",
+    "bytes": 2308,
+    "sha256": "3d1071f78d6276505499110f55bb78f021b9f5dd813a7ccf72f4628c146186d8"
+  },
+  {
+    "name": "audio-play-h5.html",
+    "bytes": 2310,
+    "sha256": "817dccff0fc775d638e4b8efbd767e5da1834eea0738dc62d54706951e2b2808"
+  },
+  {
+    "name": "audio_page_09320a0c.js",
+    "bytes": 28937,
+    "sha256": "96c91ccfa9f445a2002fb9322b47372aa9adce12f0f2b79dc82164f50529e3a2"
+  },
+  {
+    "name": "audio_play_583273ca.js",
+    "bytes": 23693,
+    "sha256": "52145164b54d47cede5528d32ee9096467bcb243010c2f095d3ed303b23cf855"
+  },
+  {
+    "name": "commons_bd624f3f.js",
+    "bytes": 219984,
+    "sha256": "b8e8d97f612c48f507d4684e074ad08a7de584f7fa4b64a596d8cf4058191b6a"
+  },
+  {
+    "name": "Comment.8def56d1.js",
+    "bytes": 144447,
+    "sha256": "96a220271c0420234c6e49ae60115a43a006f1e2a255db7a64d2d34bd4169192"
+  },
+  {
+    "name": "muye_5f7ec5dd.js",
+    "bytes": 3906555,
+    "sha256": "4f860a44b20b709a1ecb3a138fb7d996874ae4540d3522d95e721fc0c53d7a8e"
+  }
+]

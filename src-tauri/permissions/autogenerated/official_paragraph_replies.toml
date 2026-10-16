@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-paragraph-replies"
+description = "Enables the official_paragraph_replies command without any pre-configured scope."
+commands.allow = ["official_paragraph_replies"]
+
+[[permission]]
+identifier = "deny-official-paragraph-replies"
+description = "Denies the official_paragraph_replies command without any pre-configured scope."
+commands.deny = ["official_paragraph_replies"]
