@@ -16,13 +16,15 @@ async function main(){
   const hooks={
     useState(v){const i=cursor++;if(!slots[i])slots[i]={v:typeof v==='function'?v():v};return[slots[i].v,v=>{slots[i].v=typeof v==='function'?v(slots[i].v):v;}];},
     useRef(v){const i=cursor++;return slots[i]??(slots[i]={current:v});},
-    useEffect(fn,deps){const i=cursor++;if(changed(slots[i]?.deps,deps))effects.push(()=>{slots[i]?.clean?.();slots[i]={deps,clean:fn()};});}
+    useEffect(fn,deps){const i=cursor++;if(changed(slots[i]?.deps,deps))effects.push(()=>{slots[i]?.clean?.();slots[i]={deps,clean:fn()};});},
+    useImperativeHandle(ref,fn){if(ref)ref.current=fn();}
   };
   const jsx=(type,props)=>({type,props});
   const media=load('src/lib/media.ts');
+  const mediaSession=load('src/lib/mediaSession.ts');
   records.set('tomato-reader-v03:audio:book1',JSON.stringify({albumId:'album1',episodeId:'episode1',seconds:12,updatedAt:1}));
   const official={audioCatalog:async()=>({albums:[{id:'album1',name:'A'},{id:'album2',name:'B'}]}),audioEpisodes:async a=>[{id:a==='album1'?'episode1':'episode2',title:'episode'}],audioPlay:async id=>({itemId:id,urls:['https://example.com/audio.mp4']})};
-  const {OfficialAudioPlayer}=load('src/components/OfficialAudioPlayer.tsx',{'react':hooks,'react/jsx-runtime':{jsx,jsxs:jsx},'../lib/official':{official,errorMessage:String},'../lib/media':media});
+  const {OfficialAudioPlayer}=load('src/components/OfficialAudioPlayer.tsx',{'react':hooks,'react/jsx-runtime':{jsx,jsxs:jsx},'../lib/official':{official,errorMessage:String},'../lib/media':media,'../lib/mediaSession':mediaSession});
   const audio={currentTime:0,duration:60,pause(){},load(){},removeAttribute(){},play:async()=>{}};
   const walk=(x,pred)=>{if(!x||typeof x!=='object')return null;if(pred(x))return x;for(const y of [x.props?.children].flat(Infinity)){const r=walk(y,pred);if(r)return r;}return null;};
   const render=()=>{cursor=0;effects=[];tree=OfficialAudioPlayer({bookId:'book1',stopSignal:0,onStart(){},notice(){}});walk(tree,x=>x.type==='audio').props.ref.current=audio;const batch=effects;batch.forEach(f=>f());};

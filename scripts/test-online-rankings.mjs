@@ -52,9 +52,9 @@ try {
     await page.getByRole('button', { name: '加载更多榜单作品', exact: true }).click(); await page.locator('.ranking-card').nth(34).waitFor();
     assert.equal(await page.getByRole('button', { name: '加载更多榜单作品', exact: true }).count(), 0);
     check('The last partial page stops loading at the actual available total');
-    await page.getByLabel('榜单分类').selectOption('8'); await page.getByText('男频-8-2-1', { exact: true }).waitFor();
-    await page.getByLabel('榜单类型').selectOption('1'); await page.getByText('男频-8-1-1', { exact: true }).waitFor();
-    await page.getByRole('tab', { name: '女频榜', exact: true }).click(); await page.getByText('女频-24-1-1', { exact: true }).waitFor();
+    await page.getByLabel('榜单分类').selectOption('8'); await page.getByRole('heading', { name: '男频-8-2-1', exact: true }).waitFor();
+    await page.getByLabel('榜单类型').selectOption('1'); await page.getByRole('heading', { name: '男频-8-1-1', exact: true }).waitFor();
+    await page.getByRole('tab', { name: '女频榜', exact: true }).click(); await page.getByRole('heading', { name: '女频-24-1-1', exact: true }).waitFor();
     assert.equal(await page.getByLabel('榜单分类').inputValue(), '24');
     check('Gender, genre and reading/new-book filters request the matching official list');
     await page.evaluate(() => window.__rankFail = true);
@@ -65,7 +65,7 @@ try {
     await page.getByRole('button', { name: '重试加载榜单', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('.ranking-status[role=alert]'));
     await page.getByRole('button', { name: '阅读设置', exact: true }).click(); await rankings(page);
-    await page.getByText('女频-24-1-1', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: '女频-24-1-1', exact: true }).waitFor();
     assert.equal(await page.getByLabel('榜单类型').inputValue(), '1');
     check('Returning to rankings retains the selected filters and recent loaded results');
     assert.equal(await page.evaluate(() => window.__calls.filter(c => c.command === 'official_sync_progress').length), 0);
@@ -76,7 +76,7 @@ try {
     const page = await fixture(); await page.evaluate(() => window.__rankHold = true); await rankings(page);
     await page.waitForFunction(() => window.__rankingReleases.length > 0);
     await page.evaluate(() => window.__rankHold = false); await page.getByLabel('榜单分类').selectOption('8');
-    await page.getByText('男频-8-2-1', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: '男频-8-2-1', exact: true }).waitFor();
     await page.evaluate(() => window.__rankingReleases.forEach(r => r.release())); await page.waitForTimeout(200);
     assert.equal(await page.getByText('十日终焉', { exact: true }).count(), 0);
     check('A delayed old category response cannot overwrite the newly selected category'); await page.close();

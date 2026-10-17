@@ -61,7 +61,7 @@ try {
     await fits(page, '.settings-screen');
     await page.screenshot({ path: `test-output/theme-${theme}-settings.png` });
     await page.reload();
-    assert.ok(await page.locator('.app-shell.theme-' + theme).count());
+    await page.locator('.app-shell.theme-' + theme).waitFor({ state: 'visible' });
     await nav(page, '账号管理');
     await page.getByRole('button', { name: '退出账号', exact: true }).waitFor();
     await readable(page, '.account-identity strong, .account-identity small, .logout-btn, .connection-status');

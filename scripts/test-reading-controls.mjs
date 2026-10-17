@@ -22,10 +22,12 @@ try {
   await page.goto('http://127.0.0.1:1498');
   await page.getByRole('button', { name: '阅读 阅读操作测试', exact: true }).click();
   await page.locator('.story-content p').first().waitFor();
-  const centered = async () => page.locator('.chapter-scroll').evaluate(list => {
+  const centered = async () => page.waitForFunction(() => {
+    const list = document.querySelector('.chapter-scroll');
+    if (!list) return false;
     const row = list.querySelector('.chapter-item.current').getBoundingClientRect(), bounds = list.getBoundingClientRect();
     return row.top >= bounds.top && row.bottom <= bounds.bottom && Math.abs((row.top + row.bottom - bounds.top - bounds.bottom) / 2) < 3;
-  });
+  }, undefined, { timeout: 3000 }).then(() => true);
   assert.match(await page.locator('.chapter-item.current').textContent(), /第148章/);
   assert.ok(await centered());
   check('Saved chapter 148 is centered in the directory on initial opening');

@@ -53,6 +53,40 @@ fn remaining_message(started: Instant, wait: Duration, now: Instant) -> Option<S
 }
 
 impl Transport {
+    // Public image CDNs use a bounded download pool in CoverCache. Reserve
+    // dispatch slots without holding the host mutex throughout the network
+    // round trip; API calls continue using send() and its original 500ms rule.
+    pub(crate) async fn send_asset(&self, builder: RequestBuilder) -> Result<Response, String> {
+        let (client, request) = builder.build_split();
+        let request = request.map_err(|_| "封面请求构建失败")?;
+        let host = request.url().host_str().ok_or("封面地址缺少主机")?.to_string();
+        let shared = {
+            let mut hosts = self.hosts.lock().await;
+            hosts.entry(host).or_default().clone()
+        };
+        {
+            let mut state = shared.lock().await;
+            if let Some((started, wait)) = state.blocked {
+                if let Some(error) = remaining_message(started, wait, Instant::now()) {return Err(error);}
+                state.blocked = None;
+            }
+            if let Some(next) = state.next_request {tokio::time::sleep_until(next).await;}
+            state.next_request = Some(Instant::now() + Duration::from_millis(200));
+        }
+        let response = client.execute(request).await.map_err(|_| "封面连接失败，请稍后重试")?;
+        let status = response.status().as_u16();
+        let mut state = shared.lock().await;
+        if matches!(status, 429 | 503) {
+            state.strikes = state.strikes.saturating_add(1);
+            let wait = backoff(state.strikes, retry_after(response.headers().get(RETRY_AFTER).and_then(|h|h.to_str().ok()), SystemTime::now()));
+            state.blocked = Some((Instant::now(), wait));
+            return Err(format!("图片服务返回HTTP {status}，请等待{}秒后再试",wait.as_secs()));
+        }
+        // A concurrent successful image must never clear another image's 429.
+        if response.status().is_success() && state.blocked.is_none() {state.strikes = 0;}
+        Ok(response)
+    }
+
     pub(crate) async fn send(&self, builder: RequestBuilder) -> Result<Response, String> {
         let (client, request) = builder.build_split();
         let request = request.map_err(|_| "官方请求构建失败")?;
@@ -113,6 +147,33 @@ mod tests {
         net::TcpListener,
         sync::atomic::{AtomicUsize, Ordering},
     };
+
+    #[tokio::test]
+    async fn late_successful_image_cannot_erase_a_concurrent_cooldown() {
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();let address=listener.local_addr().unwrap();
+        let server=std::thread::spawn(move || {
+            let mut handlers=Vec::new();
+            for index in 0..2 {
+                let (mut socket,_)=listener.accept().unwrap();
+                handlers.push(std::thread::spawn(move || {
+                    socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                    let mut request=Vec::new();let mut buffer=[0;1024];
+                    while !request.windows(4).any(|s|s==b"\r\n\r\n") {let n=socket.read(&mut buffer).unwrap();if n==0 {break;}request.extend_from_slice(&buffer[..n]);}
+                    std::thread::sleep(Duration::from_millis(if index==0 {300}else{400}));
+                    let status=if index==0 {429}else{200};
+                    socket.write_all(format!("HTTP/1.1 {status} Result\r\nContent-Length: 0\r\nRetry-After: 1800\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+                    let _=socket.shutdown(std::net::Shutdown::Write);
+                    while matches!(socket.read(&mut buffer),Ok(n) if n>0) {}
+                }));
+            }
+            for handler in handlers {handler.join().unwrap();}
+        });
+        let client=reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();let transport=Transport::default();let url=format!("http://{address}/cover");
+        let (first,second)=tokio::join!(transport.send_asset(client.get(&url)),transport.send_asset(client.get(&url)));
+        assert!(first.unwrap_err().contains("429"));assert!(second.is_ok());drop(second);
+        assert!(transport.send_asset(client.get(&url)).await.unwrap_err().contains("没有发送请求"));
+        server.join().unwrap();
+    }
 
     #[test]
     fn server_wait_and_exponential_delay() {
@@ -186,6 +247,12 @@ mod tests {
                         std::thread::sleep(Duration::from_millis(5));
                         let _ = socket.write_all(format!("HTTP/1.1 {status} Limited\r\nRetry-After: 1800\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
                         let _ = socket.flush();
+                        // Gracefully finish the mock response and drain the peer.
+                        // Dropping a Windows socket immediately after write can
+                        // reset the connection before reqwest receives the 429.
+                        let _ = socket.shutdown(std::net::Shutdown::Write);
+                        while matches!(socket.read(&mut buffer), Ok(length) if length > 0) {}
+
                     } else {
                         std::thread::sleep(Duration::from_millis(2));
                     }

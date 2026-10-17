@@ -34,9 +34,9 @@ export function CloudShelf({ account, onOpenBookId, onManageAccount }: {
         {shelfWarning && <p role="status">{shelfWarning}</p>}
         <div className="official-shelf">
           {visible.map(b => <button key={b.id} onClick={() => void onOpenBookId(b.id, b.title, b.coverUrl)}>
-            <OfficialCover url={b.coverUrl} title={b.title} />
+            <OfficialCover bookId={b.id} url={b.coverUrl} title={b.title} />
             <div className="official-shelf-info"><strong>{b.title}</strong><span>{b.author}</span>
-              <small>{b.progressState === 'available' ? `云端读至：${b.lastReadTitle || '已记录章节，打开后定位'}` : b.progressState === 'failed' ? '章节进度读取失败，打开后可再读取' : '官方暂未返回该书章节进度'}</small>
+              <small>{b.progressState === 'loading' ? '章节进度正在后台读取…' : b.progressState === 'available' ? `云端读至：${b.lastReadTitle || '已记录章节，打开后定位'}` : b.progressState === 'failed' ? '章节进度读取失败，打开后可再读取' : '官方暂未返回该书章节进度'}</small>
               <small className="continue-link">查看目录并续读 →</small>
             </div>
           </button>)}

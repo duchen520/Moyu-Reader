@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import {
   ArrowLeft, ArrowRight, Award, BookOpen, Check, ChevronRight,
@@ -6,7 +6,9 @@ import {
   Library, Minus, Moon, Plus, RefreshCw, Search, Settings2, Sparkles, Sun, Trash2, Trophy, UploadCloud, UserRound, X,
 } from 'lucide-react';
 import { demoBooks } from './data/demo';
-import { importTxt } from './lib/importTxt';
+import { importBook } from './lib/importBook';
+import { checkForUpdate, CURRENT_VERSION } from './lib/updater';
+import type { UpdateCheckResult } from './lib/updater';
 import { openOfficialWebsite } from './lib/officialSite';
 import { official, errorMessage, plainChapter } from './lib/official';
 import type { OfficialUser } from './lib/official';
@@ -21,7 +23,7 @@ import { storage } from './lib/storage';
 import { cloudTime } from './lib/cloudProgress';
 import type { Book, Preferences, ReadingProgress, Theme } from './types';
 
-type Screen = 'rankings' | 'discovery' | 'bookshelf' | 'reader' | 'settings' | 'official' | 'cloud-shelf';
+type Screen = 'rankings' | 'discovery' | 'bookshelf' | 'reader' | 'settings' | 'official' | 'cloud-shelf' | 'opening';
 
 function loadBooks(): Book[] {
   return [...demoBooks, ...storage.books()];
@@ -36,6 +38,7 @@ export default function App() {
   const [shelfIds, setShelfIds] = useState(() => new Set(storage.books().map(b => b.id)));
   const [prefs, setPrefs] = useState<Preferences>(storage.preferences);
   const [progress, setProgress] = useState<Record<string, ReadingProgress>>(storage.progress);
+  const [opening, setOpening] = useState<{ title: string; stage: string; error?: string; id?: string } | null>(null);
   const [screen, setScreen] = useState<Screen>('bookshelf');
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [readerChapter, setReaderChapter] = useState(0);
@@ -60,6 +63,8 @@ export default function App() {
     generation: number; bookId: string; chapterId: string; chapterTitle: string;
     remoteId: string; remoteTimestamp: number; remoteTitle: string;
   } | null>(null);
+  const importing = useRef(false);
+  const [importBusy, setImportBusy] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const progressRef = useRef(progress);
   const cloudBaseline = useRef<Record<string, string>>({});
@@ -76,6 +81,24 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(null), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const handleCheckUpdate = async () => {
+    setUpdateChecking(true);
+    try {
+      const res = await checkForUpdate();
+      setUpdateResult(res);
+      if (res.hasUpdate) {
+        flash(`发现新版本 v${res.latestVersion}！`);
+      } else if (!res.error) {
+        flash(`当前已是最新版本 (v${res.currentVersion})。`);
+      }
+    } catch {
+      flash('检查更新失败，请检查网络连接后重试。');
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
   const fileInput = useRef<HTMLInputElement>(null);
   const activeBook = books.find(b => b.id === activeBookId) ?? null;
   const chapter = activeBook?.chapters[readerChapter] ?? null;
@@ -87,19 +110,24 @@ export default function App() {
     setUploadConfirmation(null);
     setReadHistory(null);
     setConflict(null);
+    setChapterLoading(false);
+    setOpening(null);
     setScreen(next);
   };
 
-  const filteredBooks = books.filter(book => {
+  const filteredBooks = useMemo(() => books.filter(book => {
     const matchesQuery = `${book.title} ${book.author}`.toLowerCase().includes(query.trim().toLowerCase());
     if (!matchesQuery) return false;
     if (shelfFilter === 'recent') return !!progress[book.id];
     if (shelfFilter === 'official') return book.source === 'official';
     if (shelfFilter === 'local') return book.source === 'local' || book.source === 'demo';
     return true;
-  });
+  }), [books, query, shelfFilter, progress]);
 
-  const lastRead = [...books].filter(b => progress[b.id]).sort((a, b) => (progress[b.id]?.updatedAt ?? 0) - (progress[a.id]?.updatedAt ?? 0))[0];
+  const lastRead = useMemo(() =>
+    [...books].filter(b => progress[b.id]).sort((a, b) => (progress[b.id]?.updatedAt ?? 0) - (progress[a.id]?.updatedAt ?? 0))[0],
+    [books, progress]
+  );
 
   const flash = (message: string) => {
     setNotice(message);
@@ -117,11 +145,9 @@ export default function App() {
   };
 
   // Read the latest persisted shelf after async work; captured React state may be stale.
-  const persistBooks = (additions: Book[]) => {
-    const merged = new Map(storage.books().map(b => [b.id, b]));
-    additions.forEach(b => merged.set(b.id, b));
-    const next = [...merged.values()];
-    storage.saveBooks(next);
+  const persistBooks = async (additions: Book[]) => {
+    const next = await storage.addBooks(additions);
+    const merged = new Map(next.map(b => [b.id, b]));
     setShelfIds(new Set(next.map(b => b.id)));
     setBooks(old => [...old.filter(b => !merged.has(b.id)), ...next]);
   };
@@ -133,10 +159,12 @@ export default function App() {
     try { storage.saveProgress(next); } catch { flash('进度保存失败：本地存储不可用。'); }
   }, []);
 
-  const enterBook = (book: Book, chapterIndex: number, restoreLocal: boolean) => {
+  const enterBook = async (book: Book, chapterIndex: number, restoreLocal: boolean) => {
+    const generation = openGeneration.current;
     if (book.source === 'official') {
-      try { persistBooks([book]); } catch { flash('作品已打开，但书架保存失败，请释放本地存储空间后重新收藏。'); }
+      try { await persistBooks([book]); } catch { flash('作品已打开，但书架保存失败，请释放本地存储空间后重新收藏。'); }
     }
+    if (generation !== openGeneration.current) return;
     setBooks(old => old.some(b => b.id === book.id) ? old.map(b => b.id === book.id ? book : b) : [...old, book]);
     readerEntryProgress.current = restoreLocal ? progressRef.current[book.id] : undefined;
     setActiveBookId(book.id);
@@ -155,7 +183,16 @@ export default function App() {
   const openOfficialBook = async (book: Book) => {
     const generation = ++openGeneration.current;
     setUploadConfirmation(null); setConflict(null);
-    setSyncStatus('正在读取云端进度…');
+    setSyncStatus('正在核对云端进度，自动上传暂停…');
+    setOpening({ title: book.title, stage: '正在读取作品目录…' });
+    setScreen('opening');
+    // Resolve progress alongside the directory, reusing startup account status.
+    // No reader/automatic upload exists until progress is resolved or failed.
+    const cloud = (async () => {
+      const user = await account.getUser();
+      const list = user ? await official.readProgress() : null;
+      return { user, list };
+    })().then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
 
     // If chapters are not yet loaded (e.g. from discovery or rankings), fetch them
     let loadedBook = book;
@@ -166,7 +203,7 @@ export default function App() {
         if (generation !== openGeneration.current) return;
       } catch (err) {
         if (generation !== openGeneration.current) return;
-        flash(`获取作品目录失败：${errorMessage(err)}`);
+        setOpening({ id: book.id, title: book.title, stage: '', error: `获取作品目录失败：${errorMessage(err)}` });
         return;
       }
     }
@@ -184,7 +221,7 @@ export default function App() {
           ],
         };
       } else {
-        flash('作品目录为空或暂无发布章节。');
+        setOpening({ id: book.id, title: book.title, stage: '', error: '作品目录为空或暂无发布章节。' });
         return;
       }
     }
@@ -192,11 +229,14 @@ export default function App() {
     const local = progressRef.current[loadedBook.id];
     let index = Math.max(0, Math.min(local?.chapterIndex ?? 0, Math.max(0, loadedBook.chapters.length - 1)));
     try {
-      const user = await official.account();
+      if (generation !== openGeneration.current) return;
+      setOpening({ title: loadedBook.title, stage: '正在核对云端阅读位置…' });
+      const result = await cloud;
+      if (!result.ok) throw result.error;
+      const { user, list } = result.value;
       if (generation !== openGeneration.current) return;
       setOfficialUser(user);
       if (user) {
-        const list = await official.readProgress();
         if (!Array.isArray(list)) throw new Error('官方进度格式已变化，自动同步暂停。');
         const remote = list.find(p => String(p.book_id) === loadedBook.id);
         if (generation !== openGeneration.current) return;
@@ -222,7 +262,7 @@ export default function App() {
     // If book already exists in local books list
     const existing = books.find(b => b.id === id);
     if (existing && existing.chapters.length > 0) {
-      openBook(existing);
+      openBook({ ...existing, title: title || existing.title, coverUrl: coverUrl || existing.coverUrl });
       return;
     }
 
@@ -293,7 +333,7 @@ export default function App() {
     }
 
     try {
-      persistBooks([fullBook]);
+      await persistBooks([fullBook]);
       flash(`已将《${bookInfo.title}》收藏至书架！`);
     } catch {
       flash('书架保存失败：本地存储空间不足。');
@@ -316,7 +356,7 @@ export default function App() {
   }, [activeBook, saveReading]);
 
   useEffect(() => {
-    if (screen !== 'reader' || !activeBook || !chapter) return;
+    if (screen !== 'reader' || !activeBook || !chapter) { setChapterLoading(false); return; }
     if (activeBook.source !== 'official' || chapter.loaded) { setChapterLoading(false); setChapterError(''); return; }
     let cancelled = false;
     setChapterLoading(true); setChapterError('');
@@ -513,20 +553,23 @@ export default function App() {
 
   const handleImportFiles = async (files: File[]) => {
     if (!files.length) return;
-    let additions: Book[] = [];
-    for (const file of files) {
-      try { additions.push(await importTxt(file)); }
-      catch (err) { flash(`${file.name} 导入失败：${err instanceof Error ? err.message : String(err)}`); }
-    }
-    if (!additions.length) return;
+    if (importing.current) { flash('正在导入文件，请等待本次保存完成。'); return; }
+    importing.current = true; setImportBusy(true);
     try {
-      persistBooks(additions);
-      flash(`成功导入 ${additions.length} 本 TXT 小说，已收藏至书架。`);
-      setQuery('');
-      navigate('bookshelf');
-    } catch {
-      flash('本地存储空间不足：请减少文件大小或删除旧书。此次导入未保存。');
-    }
+      const additions: Book[] = [];
+      for (const file of files) {
+        try { additions.push(await importBook(file)); }
+        catch (err) { flash(`${file.name} 导入失败：${err instanceof Error ? err.message : String(err)}`); }
+      }
+      if (!additions.length) return;
+      try {
+        await persistBooks(additions);
+        flash(`成功导入 ${additions.length} 本书籍，已收藏至书架。`);
+        setQuery(''); navigate('bookshelf');
+      } catch {
+        flash('导入保存失败，请检查磁盘空间和本地资料是否可写。此次导入未加入书架。');
+      }
+    } finally { importing.current = false; setImportBusy(false); }
   };
 
   const handleImport = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -539,20 +582,20 @@ export default function App() {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingFile(false);
-    const files = Array.from(e.dataTransfer.files).filter(f => /\.txt$/i.test(f.name) || f.type === 'text/plain');
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      /\.(txt|epub)$/i.test(f.name) || f.type === 'text/plain' || f.type === 'application/epub+zip'
+    );
     if (files.length) {
       await handleImportFiles(files);
     }
   };
 
-  const deleteBook = (book: Book) => {
+  const deleteBook = async (book: Book) => {
     if ((book.source !== 'local' && book.source !== 'official') || !window.confirm(`确定从书架移除「${book.title}」？`)) return;
-    const next = books.filter(b => b.id !== book.id);
     try {
-      const saved = storage.books().filter(b => b.id !== book.id);
-      storage.saveBooks(saved);
+      const saved = await storage.removeBook(book.id);
       setShelfIds(new Set(saved.map(b => b.id)));
-      setBooks(next);
+      setBooks(old => old.filter(b => b.id !== book.id));
       if (activeBookId === book.id) { navigate('bookshelf'); setActiveBookId(null); }
       flash(`已从书架移除《${book.title}》。`);
     } catch { flash('书架更新保存失败。'); }
@@ -565,12 +608,14 @@ export default function App() {
 
   return (
     <div
+      aria-busy={importBusy}
       className={`app-shell theme-${prefs.theme}`}
       onDragOver={e => { e.preventDefault(); setIsDraggingFile(true); }}
       onDragLeave={e => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
       onDrop={handleDrop}
     >
       {/* Sidebar Navigation */}
+      {importBusy && <div className="import-status" role="status">正在导入并保存书籍，请稍候…</div>}
       <aside className="sidebar">
         <button className="brand" onClick={() => navigate('bookshelf')} title="回到书架">
           <span className="brand-icon">🍅</span>
@@ -665,13 +710,20 @@ export default function App() {
         <div className="side-bottom">
           <span className={`online-dot ${officialUser ? 'green' : 'orange'}`} />
           <span>{account.checking ? '正在检查账号' : account.accountError ? '账号检查失败' : officialUser ? '官方账号在线' : '本地阅读模式'}</span>
-          <small>v0.5.9</small>
+          <small>v0.5.17</small>
         </div>
       </aside>
 
       {/* Main Content Area */}
       <main className="main-panel">
-        {screen === 'reader' && activeBook && chapter ? (
+        {screen === 'opening' && opening ? (
+          <section className="opening-screen" aria-busy={!opening.error}>
+            <button className="secondary-button" onClick={() => navigate('bookshelf')}><ArrowLeft size={16}/>返回书架</button>
+            <div className="opening-card"><div className="eyebrow">正在打开作品</div><h1>{opening.title}</h1>
+              {opening.error ? <><p role="alert">{opening.error}</p>{opening.id && <button className="primary-button" onClick={() => void openBookById(opening.id!, opening.title)}>重试打开</button>}<button className="primary-button" onClick={() => navigate('discovery')}>返回找书</button></> : <><p role="status">{opening.stage}</p><div className="opening-skeleton" aria-hidden="true">{[1,2,3,4,5].map(i => <span key={i}/>)}</div></>}
+            </div>
+          </section>
+        ) : screen === 'reader' && activeBook && chapter ? (
           <Reader
             book={activeBook}
             index={readerChapter}
@@ -732,7 +784,7 @@ export default function App() {
           <div className="settings-screen">
             <div className="topbar">
               <div className="breadcrumbs">设置 <ChevronRight size={15} /> 阅读偏好</div>
-              <span className="version-label">Tomato Reader Pro / v0.5.9</span>
+              <span className="version-label">Tomato Reader Pro / v0.5.17</span>
             </div>
             <div className="settings-center">
               <div className="eyebrow">READING PREFERENCES</div>
@@ -741,6 +793,65 @@ export default function App() {
               <div className="settings-card">
                 <PreferenceControls prefs={prefs} setPreference={setPreference} />
               </div>
+
+              <div className="eyebrow" style={{ marginTop: '28px' }}>SOFTWARE UPDATES</div>
+              <h2>软件检查更新</h2>
+              <p className="subheading">检查 Tomato Reader 最新版本与功能升级。</p>
+              <div className="settings-card update-card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '15px' }}>
+                      当前版本: v{CURRENT_VERSION}
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      {updateChecking
+                        ? '正在连接服务器检查新版本…'
+                        : updateResult?.hasUpdate
+                        ? `发现新版本: v${updateResult.latestVersion}${updateResult.publishedAt ? ` (发布于 ${updateResult.publishedAt})` : ''}`
+                        : updateResult?.error
+                        ? `检查更新提示: ${updateResult.error}`
+                        : updateResult
+                        ? '已是最新版本，无需更新。'
+                        : '点击按钮即可在线检测官方最新版本。'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="outline-button"
+                      disabled={updateChecking}
+                      onClick={() => void handleCheckUpdate()}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
+                    >
+                      <RefreshCw size={14} className={updateChecking ? 'spin' : ''} />
+                      <span>{updateChecking ? '检查中…' : '检查更新'}</span>
+                    </button>
+                    {updateResult?.hasUpdate && (
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => {
+                          const url = updateResult.installerUrl || updateResult.downloadUrl || 'https://github.com/tomato-reader/tomato-reader/releases';
+                          window.open(url, '_blank', 'noopener,noreferrer');
+                        }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
+                      >
+                        <ExternalLink size={14} />
+                        <span>下载更新</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {updateResult?.hasUpdate && updateResult.releaseNotes && (
+                  <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-light)' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand-orange)', marginBottom: '6px' }}>更新说明：</div>
+                    <pre style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '140px', overflowY: 'auto', background: 'var(--bg-sidebar)', padding: '10px', borderRadius: '8px', margin: 0 }}>
+                      {updateResult.releaseNotes}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
               <div className="settings-bottom-actions">
                 <button className="primary-button" onClick={() => navigate('bookshelf')}>
                   <span>返回我的书架</span>
@@ -771,14 +882,14 @@ export default function App() {
                     <button className="clear-search-mini" onClick={() => setQuery('')}>✕</button>
                   )}
                 </div>
-                {/* Modern subtle TXT import button, not intrusive */}
+                {/* Modern subtle book import button, not intrusive */}
                 <button
                   className="shelf-import-btn outline-button"
                   onClick={() => fileInput.current?.click()}
-                  title="导入本地 TXT 文件"
+                  title="导入本地 TXT 或 EPUB 电子书"
                 >
                   <FilePlus size={15} />
-                  <span>导入本地 TXT</span>
+                  <span>导入本地书籍 (TXT/EPUB)</span>
                 </button>
                 <button className="profile-button" onClick={openOfficial} title="打开番茄官方网站">
                   <span>🍅 番茄官网</span>
@@ -873,7 +984,7 @@ export default function App() {
                         aria-label={`阅读 ${book.title}`}
                       >
                         {book.source === 'official' ? (
-                          <OfficialCover url={book.coverUrl} title={book.title} />
+                          <OfficialCover bookId={book.id} url={book.coverUrl} title={book.title} />
                         ) : (
                           <>
                             <div className="cover-topline">TOMATO · READER</div>
@@ -928,13 +1039,13 @@ export default function App() {
                   <button
                     className="add-book-card"
                     onClick={() => fileInput.current?.click()}
-                    title="点击导入本地 TXT 文本文件"
+                    title="点击导入本地 TXT 或 EPUB 文件"
                   >
                     <span className="add-icon-circle">
                       <Plus size={22} />
                     </span>
-                    <strong>导入本地 TXT</strong>
-                    <small>或将文件直接拖入窗口</small>
+                    <strong>导入本地书籍</strong>
+                    <small>支持 TXT / EPUB 或拖入窗口</small>
                   </button>
                 )}
               </div>
@@ -982,12 +1093,12 @@ export default function App() {
         )}
       </main>
 
-      {/* Hidden File Input for TXT Import */}
+      {/* Hidden File Input for TXT/EPUB Import */}
       <input
         ref={fileInput}
         className="hidden-input"
         type="file"
-        accept=".txt,text/plain"
+        accept=".txt,.epub,text/plain,application/epub+zip"
         multiple
         onChange={handleImport}
       />
@@ -1003,7 +1114,7 @@ export default function App() {
           <div className="drag-drop-card" onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             <UploadCloud size={48} className="drag-icon-glow" />
             <h2>释放文件以导入书籍</h2>
-            <p>支持 UTF-8 编码的 .txt 小说文件，自动切分章节并加入我的书架。</p>
+            <p>支持 UTF-8 TXT 和 EPUB 电子书，导入后加入本地书架。</p>
           </div>
         </div>
       )}
@@ -1058,7 +1169,7 @@ export default function App() {
             <p>本机：{conflict.book.chapters[conflict.local].title}</p>
             <button onClick={() => chooseProgress('cloud')}>采用云端：第 {conflict.cloud + 1} 章</button>
             <button onClick={() => chooseProgress('local')}>采用本机：第 {conflict.local + 1} 章</button>
-            <button onClick={() => setConflict(null)}>取消</button>
+            <button onClick={() => { setConflict(null); if (screen === 'opening') navigate('bookshelf'); }}>取消</button>
           </div>
         </div>
       )}

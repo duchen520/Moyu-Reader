@@ -140,7 +140,7 @@ export function LeaderboardView({ onOpenBookId, onAddBookToShelf, isBookInShelf,
               {book.rank <= 3 ? <span className="crown-label">{book.rank === 1 ? '👑 NO.1' : `TOP ${book.rank}`}</span> : <span className="plain-rank">{book.rank}</span>}
             </div>
             <div className={`ranking-cover cover-${book.rank % 5}`} onClick={() => void onOpenBookId(book.id, book.title, book.coverUrl)} title={`立即阅读《${book.title}》`}>
-              <OfficialCover url={book.coverUrl} title={book.title} />
+              <OfficialCover bookId={book.id} url={book.coverUrl} title={book.title} />
             </div>
             <div className="ranking-info"><div className="ranking-title-row"><h3 className="book-title-clickable" onClick={() => void onOpenBookId(book.id, book.title, book.coverUrl)}>{book.title}</h3></div>
               <div className="ranking-meta-row"><span className="meta-author">{book.author || '作者未返回'}</span><span>·</span><span>{book.category}</span><span>·</span><span>{book.status}</span>

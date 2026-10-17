@@ -6,6 +6,7 @@ use reqwest::{cookie::Jar, redirect::Policy, Client, Method, Url};
 use serde_json::{json, Value};
 use std::{
     sync::Arc,
+    collections::HashMap,
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -29,6 +30,7 @@ struct Session {
 pub struct OfficialService {
     app: crate::app_content::AppContent,
     session: Mutex<Session>,
+    book_metadata: Mutex<HashMap<String, (Instant, Value)>>,
     transport: Arc<Transport>,
 }
 
@@ -346,7 +348,7 @@ fn normalize_play_info(j: &Value, item_id: &str) -> Result<Value, String> {
     Ok(json!({"itemId":item_id,"urls":urls}))
 }
 fn cover_url(info: &Value) -> String {
-    ["thumb_url", "thumbUrl", "thumbUri", "cover_url"]
+    ["thumb_url", "thumbUrl", "thumbUri", "cover_url", "coverUrl"]
         .iter()
         .filter_map(|k| info[*k].as_str())
         .find(|s| s.starts_with("https://") || s.starts_with("//"))
@@ -399,23 +401,61 @@ impl Default for OfficialService {
         Self {
             app: crate::app_content::AppContent::new(transport.clone()),
             session: Mutex::new(new_session(true, transport.clone())),
+            book_metadata: Mutex::new(HashMap::new()),
             transport,
         }
     }
 }
 impl OfficialService {
+    async fn remember_books(&self, books: &[Value]) {
+        let mut cache = self.book_metadata.lock().await;
+        cache.retain(|_, (time, _)|time.elapsed() < Duration::from_secs(300));
+        for book in books {
+            let id = ["id", "book_id", "bookId"].iter().map(|key|sid(&book[*key])).find(|id|check_id(id).is_ok());
+            let Some(id) = id else {continue};
+            // Recent website/shelf details should not be replaced by older
+            // search CDN links. A forced cover refresh explicitly replaces it.
+            if cache.contains_key(&id) {continue;}
+            let first = |keys: &[&str]| keys.iter().find_map(|key|book[*key].as_str().filter(|s|!s.is_empty())).unwrap_or("").to_string();
+            let title = first(&["title", "book_name", "bookName"]);
+            if title.is_empty() || title == "未返回书名" || book["metadataMissing"] == true {continue;}
+            let author = first(&["author", "author_name", "authorName"]);
+            if author.is_empty() {continue;}
+            let value = json!({"title":title,"author":author,"description":first(&["description", "abstract"]),"coverUrl":cover_url(book)});
+            cache.insert(id, (Instant::now(), value));
+        }
+        while cache.len() > 512 {
+            let Some(oldest) = cache.iter().min_by_key(|(_, (time, _))|time).map(|(id,_)|id.clone()) else {break;};
+            cache.remove(&oldest);
+        }
+    }
+
+    // Clone the HTTP handles under a short lock. A whole shelf refresh must not
+    // hold the account mutex while other pages wait to open books or rankings.
+    // The cookie jar belongs to this snapshot; logout creates a different jar.
+    async fn read_session(&self) -> Session {
+        let session = self.session.lock().await;
+        Session {
+            transport: session.transport.clone(),
+            client: session.client.clone(),
+            jar: session.jar.clone(),
+            ticket: None,
+        }
+    }
     pub async fn ranking_categories(&self) -> Result<Value, String> {
-        let client = self.session.lock().await.client.clone();
+        let client = self.read_session().await.client;
         crate::rankings::categories(&client, &self.transport).await
     }
     pub async fn rankings(&self, gender: u8, mold: u8, category: &str, offset: u32, version: &str) -> Result<Value, String> {
-        let client = self.session.lock().await.client.clone();
-        crate::rankings::page(&client, &self.transport, gender, mold, category, offset, version).await
+        let client = self.read_session().await.client;
+        let page = crate::rankings::page(&client, &self.transport, gender, mold, category, offset, version).await?;
+        if let Some(books) = page["books"].as_array() { self.remember_books(books).await; }
+        Ok(page)
     }
     /// Read-only local diagnosis. Never exports session cookies or account identity.
     #[cfg(debug_assertions)]
     pub async fn diagnose_progress(&self) -> Result<Value, String> {
-        let s = self.session.lock().await;
+        let s = self.read_session().await;
         if user(&s).await?.is_null() {
             return Err("本机没有可恢复的登录会话，未读取账号进度".into());
         }
@@ -442,14 +482,14 @@ impl OfficialService {
     }
     pub async fn read_history(&self, book_id: &str) -> Result<Value, String> {
         check_id(book_id)?;
-        let s = self.session.lock().await;
+        let s = self.read_session().await;
         if user(&s).await?.is_null() { return Err("登录会话不可用，未读取历史".into()); }
         let data = request(&s, Method::GET, &format!("/api/reader/book/read_item_list?book_id={book_id}"), None).await?;
         business(&data)?;
         Ok(json!(read_item_ids(&data["data"])?))
     }
     pub async fn account(&self) -> Result<Value, String> {
-        user(&*self.session.lock().await).await
+        user(&self.read_session().await).await
     }
     pub async fn start_login(&self) -> Result<Value, String> {
         let mut s = self.session.lock().await;
@@ -568,8 +608,9 @@ impl OfficialService {
         *self.session.lock().await = new_session(false, self.transport.clone());
         clear_credential()
     }
-    pub async fn bookshelf(&self) -> Result<Value, String> {
-        let s = self.session.lock().await;
+    pub async fn bookshelf(&self) -> Result<Value, String> { self.bookshelf_updates(None).await }
+    pub async fn bookshelf_updates(&self, updates: Option<Box<dyn Fn(Value) + Send + Sync>>) -> Result<Value, String> {
+        let s = self.read_session().await;
         if user(&s).await?.is_null() {
             return Err("登录会话无效，请重新扫码登录".into());
         }
@@ -602,7 +643,17 @@ impl OfficialService {
                     .cloned()
                     .ok_or("官方书籍资料格式已变化".into())
             }) {
-                Ok(list) => details.extend(list),
+                Ok(list) => {
+                    self.remember_books(&list).await;
+                    details.extend(list);
+                    if let Some(update) = &updates {
+                        let ready: Vec<Value> = ids.iter().filter_map(|id| {
+                            let info = details.iter().find(|b| sid(&b["book_id"]) == *id)?;
+                            Some(json!({"id":id,"title":info["book_name"].as_str().unwrap_or("未返回书名"),"author":info["author_name"].as_str().unwrap_or(""),"coverUrl":cover_url(info),"progressState":"loading"}))
+                        }).collect();
+                        update(json!({"entries":ready,"partial":true,"total":ids.len()}));
+                    }
+                },
                 Err(e) => {
                     metadata_warning = Some(format!("书架已读取，部分封面/书名未取得：{e}"));
                     break;
@@ -673,18 +724,44 @@ impl OfficialService {
             json!({"entries":books,"progressError":progress_error,"metadataWarning":metadata_warning}),
         )
     }
+    pub(crate) async fn fresh_cover(&self, id: &str, previous: &str) -> Result<String,String> {
+        check_id(id)?;
+        if let Some((time, info)) = self.book_metadata.lock().await.get(id) {
+            let cover = cover_url(info);
+            if time.elapsed()<Duration::from_secs(300) && !cover.is_empty() && cover != previous && !cover.contains("p6-tt.bytecdn.cn/") {return Ok(cover);}
+        }
+        let session=self.read_session().await;
+        let response=request(&session,Method::GET,&format!("/api/book/info?bookId={id}"),None).await?;
+        business(&response)?;
+        let data=&response["data"];
+        let returned=sid(data.get("bookId").unwrap_or(&data["book_id"]));
+        if !returned.is_empty() && returned!=id {return Err("封面资料与书籍不一致".into());}
+        let cover=cover_url(data);
+        if cover.is_empty() {return Err("官网未提供当前封面".into());}
+        let info=json!({"id":id,"title":data["bookName"].as_str().or_else(||data["book_name"].as_str()).unwrap_or("番茄小说"),"author":data["author"].as_str().or_else(||data["authorName"].as_str()).unwrap_or(""),"description":data["abstract"].as_str().unwrap_or(""),"coverUrl":cover});
+        self.book_metadata.lock().await.remove(id);
+        self.remember_books(&[info]).await;
+        Ok(if cover.starts_with("//") {format!("https:{cover}")} else {cover})
+    }
+
     pub async fn book(&self, id: &str) -> Result<Value, String> {
         check_id(id)?;
-        let s = self.session.lock().await;
-        let j = request(
-            &s,
-            Method::GET,
-            &format!("/api/book/info?bookId={id}"),
-            None,
-        )
-        .await?;
-        business(&j)?;
-        let d = &j["data"];
+        let cached = {
+            let mut cache = self.book_metadata.lock().await;
+            cache.retain(|_, (time, _)|time.elapsed() < Duration::from_secs(300));
+            cache.get(id).map(|(_,value)|value.clone())
+        };
+        let s = self.read_session().await;
+        let d = if let Some(info) = cached { info } else {
+            let j = request(&s, Method::GET, &format!("/api/book/info?bookId={id}"), None).await?;
+            business(&j)?;
+            let raw = &j["data"];
+            let info = json!({"id":id,"title":raw["bookName"].as_str().or_else(||raw["book_name"].as_str()).unwrap_or("番茄小说"),
+                "author":raw["author"].as_str().or_else(||raw["authorName"].as_str()).unwrap_or(""),
+                "description":raw["abstract"].as_str().unwrap_or(""),"coverUrl":cover_url(raw)});
+            self.remember_books(&[info.clone()]).await;
+            info
+        };
         let directory = request(
             &s,
             Method::GET,
@@ -719,9 +796,9 @@ impl OfficialService {
             return Err("官方未返回可读章节".into());
         }
         Ok(
-            json!({"id":id,"title":d["bookName"].as_str().or_else(|| d["book_name"].as_str()).unwrap_or("番茄小说"),
-            "author":d["author"].as_str().or_else(|| d["authorName"].as_str()).unwrap_or(""),
-            "description":d["abstract"].as_str().unwrap_or(""),"source":"official", "coverStyle":0,"coverUrl":cover_url(d),"chapters":chapters,
+            json!({"id":id,"title":d["title"].as_str().unwrap_or("番茄小说"),
+            "author":d["author"].as_str().unwrap_or(""),
+            "description":d["description"].as_str().unwrap_or(""),"source":"official", "coverStyle":0,"coverUrl":cover_url(&d),"chapters":chapters,
             "addedAt":0}),
         )
     }
@@ -729,7 +806,7 @@ impl OfficialService {
         self.app.chapter(id).await
     }
     pub async fn read_progress(&self) -> Result<Value, String> {
-        let s = self.session.lock().await;
+        let s = self.read_session().await;
         if user(&s).await?.is_null() {
             return Err("登录会话已过期，请重新登录".into());
         }
@@ -822,6 +899,7 @@ impl OfficialService {
         let d = &j["data"];
         let rows = d["ret_data"].as_array().ok_or("官方搜索格式已变化")?;
         let books=rows.iter().filter(|b| check_id(&sid(&b["book_id"])).is_ok()).map(|b|json!({"id":sid(&b["book_id"]),"title":b["title"].as_str().or_else(||b["book_name"].as_str()).unwrap_or("未返回书名"),"author":b["author"].as_str().unwrap_or(""),"description":b["abstract"].as_str().unwrap_or(""),"score":sid(&b["score"]),"coverUrl":cover_url(b)})).collect::<Vec<_>>();
+        self.remember_books(&books).await;
         let next = number(&d["offset"]);
         Ok(
             json!({"books":books,"hasMore":d["has_more"].as_bool().unwrap_or(number(&d["has_more"])>0),"nextOffset":if next>offset as i64 {next} else {offset as i64+10}}),
@@ -845,7 +923,7 @@ impl OfficialService {
     }
     pub async fn audio_catalog(&self, book_id: &str) -> Result<Value, String> {
         check_id(book_id)?;
-        let s = self.session.lock().await;
+        let s = self.read_session().await;
         let j=request(&s,Method::GET,&format!("/reading/bookapi/audio/toneinfo/?aid=1967&app_name=novelapp&version_code=57700&update_version_code=57700&device_platform=web&iid=0&book_id={book_id}"),None).await?;
         business(&j)?;
         let d = &j["data"];
@@ -863,7 +941,7 @@ impl OfficialService {
     }
     pub async fn audio_episodes(&self, album_id: &str) -> Result<Value, String> {
         check_id(album_id)?;
-        let s = self.session.lock().await;
+        let s = self.read_session().await;
         let j = request(
             &s,
             Method::GET,
@@ -911,6 +989,59 @@ impl OfficialService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn slow_read_does_not_hold_account_state_and_logout_isolates_cookies() {
+        use std::{io::{Read, Write}, net::TcpListener};
+        let transport = Arc::new(Transport::default());
+        let service = OfficialService {
+            app: crate::app_content::AppContent::new(transport.clone()),
+            session: Mutex::new(new_session(false, transport.clone())),
+            book_metadata: Mutex::new(HashMap::new()),
+            transport,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (started, received) = tokio::sync::oneshot::channel();
+        let (finish, blocked) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut buffer = [0; 2048];
+            stream.read(&mut buffer).unwrap();
+            let _ = started.send(());
+            blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+        });
+        let snapshot = service.read_session().await;
+        let old_jar = snapshot.jar.clone();
+        let background = tokio::spawn(async move {
+            let client = Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+            snapshot.transport.send(client.get(format!("http://{address}/slow-read"))).await
+        });
+        tokio::time::timeout(Duration::from_secs(5), received).await.unwrap().unwrap();
+        let foreground = tokio::time::timeout(Duration::from_millis(500), service.read_session()).await.unwrap();
+        assert!(Arc::ptr_eq(&foreground.jar, &old_jar));
+        // Replace only in-memory state: never touch the user's saved credential.
+        *service.session.lock().await = new_session(false, service.transport.clone());
+        let after_logout = service.read_session().await;
+        assert!(!Arc::ptr_eq(&after_logout.jar, &old_jar));
+        assert!(Arc::ptr_eq(&after_logout.transport, &foreground.transport));
+        finish.send(()).unwrap();
+        assert!(background.await.unwrap().is_ok());
+        server.join().unwrap();
+    }
+    #[tokio::test]
+    async fn metadata_cache_reuses_known_details_and_expires_old_entries() {
+        let transport=Arc::new(Transport::default());
+        let service=OfficialService {app:crate::app_content::AppContent::new(transport.clone()),session:Mutex::new(new_session(false,transport.clone())),book_metadata:Mutex::new(HashMap::new()),transport};
+        service.book_metadata.lock().await.insert("987654".into(),(Instant::now()-Duration::from_secs(301),json!({"title":"expired"})));
+        service.remember_books(&[json!({"book_id":"123456","book_name":"缓存作品","author_name":"作者","thumb_url":"https://p3.fqnovelpic.com/a.webp","abstract":"简介"})]).await;
+        let cache=service.book_metadata.lock().await;
+        assert!(!cache.contains_key("987654"));assert_eq!(cache["123456"].1["title"],"缓存作品");assert_eq!(cache["123456"].1["coverUrl"],"https://p3.fqnovelpic.com/a.webp");
+        drop(cache);
+        service.remember_books(&[json!({"id":"123456","title":"旧搜索标题","author":"作者","coverUrl":"https://p6-tt.bytecdn.cn/old.image"})]).await;
+        assert_eq!(service.fresh_cover("123456","https://p6-tt.bytecdn.cn/old.image").await.unwrap(),"https://p3.fqnovelpic.com/a.webp");
+    }
     #[test]
     fn command_futures_can_move_between_desktop_threads() {
         fn require_send<T: Send>(_: T) {}
@@ -918,6 +1049,7 @@ mod tests {
         let service = OfficialService {
             app: crate::app_content::AppContent::new(transport.clone()),
             session: Mutex::new(new_session(false, transport.clone())),
+            book_metadata: Mutex::new(HashMap::new()),
             transport,
         };
         // Dropped without polling: this checks the desktop command contract without HTTP.

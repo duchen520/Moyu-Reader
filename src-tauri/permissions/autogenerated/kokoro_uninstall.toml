@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kokoro-uninstall"
+description = "Enables the kokoro_uninstall command."
+commands.allow = ["kokoro_uninstall"]
+
+[[permission]]
+identifier = "deny-kokoro-uninstall"
+description = "Denies the kokoro_uninstall command."
+commands.deny = ["kokoro_uninstall"]

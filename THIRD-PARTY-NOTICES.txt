@@ -3,3 +3,14 @@ App protocol signing, normal session encoding and media handling reference naiyQ
 Complete corresponding source is provided alongside the installer.
 Original: https://github.com/naiyQAQ/fanqie-assistant
 Other dependencies retain their licenses: React MIT; Tauri MIT/Apache-2.0; RustCrypto MIT/Apache-2.0; reqwest MIT/Apache-2.0.
+
+0.5.15 offline CPU speech:
+- sherpa-onnx 1.13.8, Apache-2.0: https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8
+- ONNX Runtime, MIT: official binary included in the pinned sherpa-onnx Windows x64 MT Release SDK.
+- Kokoro-82M v1.1 Chinese model, Apache-2.0: https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh
+- The separately imported INT8 conversion and data are from https://huggingface.co/csukuangfj/kokoro-int8-multi-lang-v1_1 at revision 155831f1b4ba23b1f5c058be6a61df90cefb2a37.
+- eSpeak NG linguistic data retains its upstream licenses: https://github.com/espeak-ng/espeak-ng
+Bundled engine license texts are under resources/kokoro/engine. The voice package retains its LICENSE when imported. No model weights are included in the clean source archive or installer.
+The bridge source, public model-file manifest, fixed SDK SHA256 and rebuild script are included in the corresponding source.
+
+HTML tokenization: html5ever (MIT/Apache-2.0), https://github.com/servo/html5ever .

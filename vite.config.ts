@@ -11,5 +11,15 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**'] },
   },
   envPrefix: ['VITE_'],
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/lucide-react')) return 'lucide-icons';
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) return 'react-vendor';
+        },
+      },
+    },
+  },
 });

@@ -33,6 +33,14 @@
     "allow-official-audio-alignment",
     "allow-official-paragraph-counts",
     "allow-official-paragraph-comments",
-    "allow-official-paragraph-replies"
+    "allow-official-paragraph-replies",
+    "allow-official-cover",
+    "allow-kokoro-status",
+    "allow-kokoro-import",
+    "allow-kokoro-begin",
+    "allow-kokoro-stop",
+    "allow-kokoro-synthesize",
+    "allow-kokoro-uninstall",
+    "allow-kokoro-pick-directory"
   ]
 }

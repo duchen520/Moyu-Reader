@@ -8,3 +8,6 @@ src-tauri/gen/schemas/
 .DS_Store
 
 test-output/
+src-tauri/resources/kokoro/engine/*.dll
+
+release-output/

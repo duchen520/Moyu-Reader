@@ -239,7 +239,7 @@ export function DiscoveryView({ onOpenBookId, onAddBookToShelf, isBookInShelf, n
                     className="search-book-cover-wrap"
                     onClick={() => void onOpenBookId(b.id, b.title, b.coverUrl)}
                   >
-                    <OfficialCover url={b.coverUrl} title={b.title} />
+                    <OfficialCover bookId={b.id} url={b.coverUrl} title={b.title} />
                   </div>
 
                   <div className="search-book-details">
@@ -362,8 +362,7 @@ export function DiscoveryView({ onOpenBookId, onAddBookToShelf, isBookInShelf, n
                       onClick={() => void onOpenBookId(book.id, book.title)}
                     >
                       <span className="rec-cover-badge">{book.score} 分</span>
-                      <strong className="rec-cover-title">{book.title}</strong>
-                      <small className="rec-cover-author">{book.author}</small>
+                      <OfficialCover bookId={book.id} title={book.title} />
                     </div>
 
                     <div className="rec-info">
