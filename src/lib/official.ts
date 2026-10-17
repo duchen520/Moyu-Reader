@@ -1,9 +1,9 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import type { Book, Chapter } from '../types';
 import type { RankingCatalog, RankingPage } from '../data/rankings';
 export interface OfficialUser { id: string; name: string }
-export interface ShelfEntry { id: string; title: string; author: string; coverUrl?: string; lastReadItemId?: string | null; lastReadTitle?: string | null; progressState?: 'available' | 'missing' | 'failed' }
-export interface ShelfSnapshot { entries: ShelfEntry[]; progressError?: string | null; metadataWarning?: string | null }
+export interface ShelfEntry { id: string; title: string; author: string; coverUrl?: string; lastReadItemId?: string | null; lastReadTitle?: string | null; progressState?: 'available' | 'missing' | 'failed' | 'loading' }
+export interface ShelfSnapshot { entries: ShelfEntry[]; progressError?: string | null; metadataWarning?: string | null; partial?: boolean; total?: number }
 export interface CloudProgress { book_id: string; item_id: string; read_timestamp: number }
 export interface BookComment { id: string; name: string; text: string; likes: number; replies: number; userId?: string; createdAt?: number; images?: string[] }
 export interface DetailedComment extends BookComment { images: string[]; children: DetailedComment[]; replyTo: string }
@@ -33,7 +33,11 @@ export const official = {
   pollLogin: () => call<LoginPoll>('official_poll_login'),
   cancelLogin: () => call<void>('official_cancel_login'),
   logout: () => call<void>('official_logout'),
-  bookshelf: () => call<ShelfSnapshot>('official_bookshelf'),
+  bookshelf: (onUpdate?: (snapshot: ShelfSnapshot) => void) => {
+    const supported = typeof Reflect.get(window, '__TAURI_INTERNALS__')?.transformCallback === 'function';
+    const updates = onUpdate && supported ? new Channel<ShelfSnapshot>(onUpdate) : undefined;
+    return call<ShelfSnapshot>('official_bookshelf', updates ? { updates } : undefined);
+  },
   book: (id: string) => call<Book>('official_book', { id }),
   chapter: (id: string) => call<Chapter>('official_chapter', { id }),
   readProgress: () => call<CloudProgress[]>('official_read_progress'),

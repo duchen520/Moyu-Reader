@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-official-cover"
+description = "Enables the official_cover command without any pre-configured scope."
+commands.allow = ["official_cover"]
+
+[[permission]]
+identifier = "deny-official-cover"
+description = "Denies the official_cover command without any pre-configured scope."
+commands.deny = ["official_cover"]

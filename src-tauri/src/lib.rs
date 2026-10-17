@@ -1,3 +1,6 @@
+mod cover_cache;
+mod local_tts;
+mod chapter_html;
 mod app_content;
 mod app_crypto;
 mod app_media;
@@ -15,6 +18,103 @@ mod desktop {
             Ok(())
         } else {
             Err("远程窗口不能访问本地账号服务".into())
+        }
+    }
+
+    #[tauri::command]
+    fn kokoro_status(window:WebviewWindow, service:State<'_,std::sync::Arc<crate::local_tts::LocalTts>>) -> Result<Value,String> {
+        local_only(&window)?; Ok(service.status())
+    }
+    #[tauri::command]
+    async fn kokoro_import(window:WebviewWindow, service:State<'_,std::sync::Arc<crate::local_tts::LocalTts>>, directory:String) -> Result<Value,String> {
+        local_only(&window)?;
+        if directory.len()>4096 {return Err("语音包路径过长".into());}
+        let service=service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.import(std::path::Path::new(directory.trim()))).await.map_err(|_|"语音包导入任务失败")?
+    }
+    #[tauri::command]
+    fn kokoro_begin(window:WebviewWindow, service:State<'_,std::sync::Arc<crate::local_tts::LocalTts>>) -> Result<u64,String> {
+        local_only(&window)?; service.begin()
+    }
+    #[tauri::command]
+    fn kokoro_stop(window:WebviewWindow, service:State<'_,std::sync::Arc<crate::local_tts::LocalTts>>, session:u64) -> Result<(),String> {
+        local_only(&window)?; service.stop(session); Ok(())
+    }
+    #[tauri::command]
+    async fn kokoro_synthesize(window:WebviewWindow, service:State<'_,std::sync::Arc<crate::local_tts::LocalTts>>, session:u64, text:String, speaker:i32) -> Result<Value,String> {
+        local_only(&window)?; service.synthesize(session,text,speaker).await
+    }
+    #[tauri::command]
+    async fn kokoro_uninstall(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::local_tts::LocalTts>>) -> Result<Value, String> {
+        local_only(&window)?;
+        let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.uninstall()).await.map_err(|_| String::from("语音包卸载任务失败"))?
+    }
+    #[tauri::command]
+    async fn kokoro_pick_directory(window: WebviewWindow) -> Result<Option<String>, String> {
+        local_only(&window)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let script = r#"[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = '选择包含 model.int8.onnx 的 Kokoro 语音包文件夹'; $f.ShowNewFolderButton = $false; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"#;
+                let output = std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", script])
+                    .creation_flags(0x08000000)
+                    .output()
+                    .map_err(|e| format!("无法打开文件夹选择窗口: {e}"))?;
+                if !output.status.success() { return Err(String::from("文件夹选择窗口未能正常打开，请手工输入路径")); }
+                let path = String::from_utf8(output.stdout).map_err(|_| String::from("文件夹路径编码无效，请手工输入路径"))?.trim().trim_start_matches('\u{feff}').to_string();
+                if path.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(path))
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                Ok(None)
+            }
+        }).await.map_err(|_| String::from("目录选择任务失败"))?
+    }
+
+    #[tauri::command]
+    async fn official_cover(window: WebviewWindow, cache: State<'_, crate::cover_cache::CoverCache>, service: State<'_, OfficialService>, url: String, book_id: Option<String>) -> Result<Value,String> {
+        local_only(&window)?;
+        if url.is_empty() {
+            let book=book_id.as_deref().ok_or("封面书籍ID无效")?;
+            if let Some(value)=cache.lookup_book(book)? {return Ok(value);}
+            let fresh=service.fresh_cover(book,"").await?;
+            let value=cache.get(&fresh,Some(book)).await?;
+            cache.alias_book(book,&value);
+            return Ok(value);
+        }
+        if let Some(value)=cache.lookup(&url,book_id.as_deref())? {return Ok(value);}
+        // Search still supplies this obsolete CDN; obtain its current first-party
+        // cover before a network timeout, while keeping the original cache alias.
+        let legacy = reqwest::Url::parse(&url).ok().is_some_and(|url|url.host_str()==Some("p6-tt.bytecdn.cn"));
+        if legacy {
+            if let Some(book)=book_id.as_deref() {
+                let fresh=service.fresh_cover(book,&url).await?;
+                if fresh!=url {
+                    let value=cache.get(&fresh,Some(book)).await?;
+                    cache.alias(&url,book,&value);
+                    return Ok(value);
+                }
+            }
+        }
+        match cache.get(&url,book_id.as_deref()).await {
+            Err(error) if matches!(error.as_str(),"封面返回HTTP 403" | "封面返回HTTP 404" | "封面连接失败，请稍后重试") && book_id.is_some() => {
+                // A stale public cover link can be replaced only by the current
+                // first-party book metadata, never by guessing CDN signatures.
+                let book=book_id.as_deref().unwrap();
+                let fresh=service.fresh_cover(book,&url).await?;
+                if fresh==url {return Err(error);}
+                let value=cache.get(&fresh,Some(book)).await?;
+                cache.alias(&url,book,&value);
+                Ok(value)
+            }
+            value=>value,
         }
     }
 
@@ -63,9 +163,10 @@ mod desktop {
     async fn official_bookshelf(
         window: WebviewWindow,
         s: State<'_, OfficialService>,
+        updates: Option<tauri::ipc::JavaScriptChannelId>,
     ) -> Result<Value, String> {
         local_only(&window)?;
-        s.bookshelf().await
+        s.bookshelf_updates(updates.map(|id| { let channel: tauri::ipc::Channel<Value> = id.channel_on(window.as_ref().clone()); Box::new(move |value| { let _ = channel.send(value); }) as Box<dyn Fn(Value) + Send + Sync> })).await
     }
     #[tauri::command]
     async fn official_book(
@@ -221,7 +322,28 @@ mod desktop {
     pub fn run() {
         tauri::Builder::default()
             .manage(OfficialService::default())
+            .setup(|app| {
+                use tauri::Manager;
+                let root = if let Some(profile) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
+                    std::path::PathBuf::from(profile).join("tomato-cover-cache")
+                } else { app.path().app_cache_dir()?.join("covers") };
+                app.manage(crate::cover_cache::CoverCache::new(root));
+                let data = if let Some(profile)=std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
+                    std::path::PathBuf::from(profile).join("tomato-kokoro")
+                } else {app.path().app_local_data_dir()?.join("kokoro")};
+                let engine=app.path().resource_dir()?.join("resources/kokoro/engine");
+                app.manage(std::sync::Arc::new(crate::local_tts::LocalTts::new(data,engine)));
+                Ok(())
+            })
             .invoke_handler(tauri::generate_handler![
+                official_cover,
+                kokoro_status,
+                kokoro_import,
+                kokoro_uninstall,
+                kokoro_pick_directory,
+                kokoro_begin,
+                kokoro_stop,
+                kokoro_synthesize,
                 official_account,
                 official_start_login,
                 official_poll_login,

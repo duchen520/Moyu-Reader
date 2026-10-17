@@ -17,6 +17,8 @@ export function useOfficialAccount() {
   const shelfGeneration = useRef(0);
   const shelfRequest = useRef<number | null>(null);
   const accountRequest = useRef<Promise<OfficialUser | null> | null>(null);
+  const resolved = useRef(false);
+  const verifiedAt = useRef(0);
 
   const acceptUser = useCallback((next: OfficialUser | null) => {
     accountGeneration.current++;
@@ -26,6 +28,7 @@ export function useOfficialAccount() {
       setShelf([]); setShelfLoaded(false); setShelfBusy(false);
       setShelfError(''); setShelfWarning('');
     }
+    resolved.current = true; verifiedAt.current = Date.now();
     userRef.current = next;
     setUser(next); setChecking(false); setAccountError('');
   }, []);
@@ -48,6 +51,19 @@ export function useOfficialAccount() {
     }
   }, [acceptUser]);
 
+  const getUser = useCallback(async () => {
+    if (resolved.current && Date.now() - verifiedAt.current < 60000) return userRef.current;
+    if (accountRequest.current) return accountRequest.current;
+    const generation = accountGeneration.current;
+    const request = official.account();
+    accountRequest.current = request;
+    try {
+      const next = await request;
+      if (mounted.current && generation === accountGeneration.current) acceptUser(next);
+      return next;
+    } finally { if (accountRequest.current === request) accountRequest.current = null; }
+  }, [acceptUser]);
+
   const refreshShelf = useCallback(async () => {
     const accountId = userRef.current?.id;
     if (!accountId || shelfRequest.current !== null) return;
@@ -55,7 +71,17 @@ export function useOfficialAccount() {
     shelfRequest.current = generation;
     setShelfBusy(true); setShelfError('');
     try {
-      const result = await official.bookshelf();
+      const result = await official.bookshelf(snapshot => {
+        if (!mounted.current || shelfRequest.current !== generation || generation !== shelfGeneration.current || userRef.current?.id !== accountId) return;
+        if (!Array.isArray(snapshot.entries)) return;
+        // Metadata arrives in batches while progress/title requests continue.
+        setShelf(old => {
+          const incoming = new Map(snapshot.entries.map(book => [book.id, book]));
+          const known = new Set(old.map(book => book.id));
+          return [...old.map(book => incoming.get(book.id) ?? book), ...snapshot.entries.filter(book => !known.has(book.id))];
+        });
+        setShelfLoaded(true);
+      });
       if (!mounted.current || generation !== shelfGeneration.current || userRef.current?.id !== accountId) return;
       if (!Array.isArray(result.entries)) throw new Error('官方书架格式已变化');
       setShelf(result.entries); setShelfLoaded(true);
@@ -82,7 +108,7 @@ export function useOfficialAccount() {
     if (user?.id) void refreshShelf();
   }, [user?.id, refreshShelf]);
 
-  return { user, checking, accountError, checkAccount, acceptUser,
+  return { user, checking, accountError, checkAccount, getUser, acceptUser,
     shelf, shelfBusy, shelfError, shelfWarning, shelfLoaded, refreshShelf };
 }
 

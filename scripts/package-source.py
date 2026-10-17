@@ -17,7 +17,7 @@ with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
             relative = path.relative_to(root)
             if path.resolve() == destination.resolve():
                 continue
-            if path.name.startswith('.env') or path.suffix.lower() in {'.zip', '.log', '.exe', '.pdb'}:
+            if path.name.startswith('.env') or path.suffix.lower() in {'.zip', '.log', '.exe', '.pdb', '.dll', '.lib', '.exp', '.obj', '.onnx', '.bin'}:
                 continue
             archive.write(path, Path(f'tomato-reader-v{version}') / relative)
 print(destination)

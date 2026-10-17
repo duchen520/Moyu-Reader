@@ -44,9 +44,43 @@ async fn api(client: &Client, transport: &Arc<Transport>, method: Method, path: 
     Ok(value)
 }
 
+// The site's SSR state is a JavaScript object literal, not always strict JSON.
+// Accept only its observed `undefined` value token; never evaluate website code
+// or replace text inside quoted names/descriptions.
+fn state_json(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let (mut index, mut quoted, mut escaped) = (0, false, false);
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if quoted {
+            result.push(byte);
+            if escaped { escaped = false; }
+            else if byte == b'\\' { escaped = true; }
+            else if byte == b'"' { quoted = false; }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' { quoted = true; }
+        let boundary = |b: u8| !b.is_ascii_alphanumeric() && b != b'_' && b != b'$';
+        if bytes[index..].starts_with(b"undefined")
+            && (index == 0 || boundary(bytes[index - 1]))
+            && (index + 9 == bytes.len() || boundary(bytes[index + 9])) {
+            result.extend_from_slice(b"null");
+            index += 9;
+        } else {
+            result.push(byte);
+            index += 1;
+        }
+    }
+    // Only ASCII tokens were replaced, so UTF-8 from the input is preserved.
+    String::from_utf8(result).expect("UTF-8 state")
+}
+
 fn parse_catalog(html: &str) -> Result<Value, String> {
     let rest = html.split_once("window.__INITIAL_STATE__=").map(|(_, rest)| rest).ok_or("官网榜单分类格式已变化")?;
-    let state = serde_json::Deserializer::from_str(rest).into_iter::<Value>().next().ok_or("官网分类数据缺失")?
+    let normalized = state_json(rest);
+    let state = serde_json::Deserializer::from_str(&normalized).into_iter::<Value>().next().ok_or("官网分类数据缺失")?
         .map_err(|_| "官网分类数据无法识别")?;
     let source = &state["rank"]["rankCategoryTypeList"];
     let mut result = json!({"male":[], "female":[]});
@@ -195,6 +229,15 @@ mod tests {
         let html = r#"<script>window.__INITIAL_STATE__={"rank":{"rankCategoryTypeList":{"male":[{"id":"257","name":"玄幻脑洞"}],"female":[{"id":"24","name":"快穿"}]}}};evil()</script>"#;
         assert_eq!(parse_catalog(html).unwrap()["male"][0]["name"], "玄幻脑洞");
         assert!(parse_catalog("window.__INITIAL_STATE__=evil()").is_err());
+    }
+    #[test] fn ssr_undefined_fields_do_not_hide_valid_categories() {
+        let html = r#"window.__INITIAL_STATE__={"rank":{"bookList":[{"pos_category_id":undefined}],"rankCategoryTypeList":{"male":[{"id":"257","name":"玄幻 undefined 脑洞"}],"female":[{"id":"24","name":"快穿"}]}},"unused":[undefined,"undefined","escaped\\\"undefined"]};window.other=1"#;
+        let catalog = parse_catalog(html).unwrap();
+        assert_eq!(catalog["male"][0]["name"], "玄幻 undefined 脑洞");
+        assert_eq!(catalog["female"][0]["id"], "24");
+        for expression in ["undefinedFunction()", "undefined + 1", "(()=>null)()"] {
+            assert!(parse_catalog(&format!("window.__INITIAL_STATE__={{\"rank\":{expression}}}")).is_err());
+        }
     }
     #[test] fn invalid_rank_arguments_do_not_build_urls() {
         assert!(validate(1,2,"257",10,"1792086600").is_ok());

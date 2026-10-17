@@ -2,6 +2,14 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "official_cover",
+            "kokoro_status",
+            "kokoro_import",
+            "kokoro_uninstall",
+            "kokoro_pick_directory",
+            "kokoro_begin",
+            "kokoro_stop",
+            "kokoro_synthesize",
             "official_account",
             "official_start_login",
             "official_poll_login",

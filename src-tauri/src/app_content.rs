@@ -273,9 +273,17 @@ impl AppContent {
             return Err("本章正文不完整或编码不支持".into());
         }
         let n = num(&d["paragraphs_num"]);
-        if n <= 0 || text.matches("<p").count() as i64 != n {
-            return Err("官方正文段落不完整，未标记已读".into());
+        #[cfg(test)]
+        if std::env::var("TOMATO_DIAGNOSE_CHAPTER").ok().is_some_and(|items|items.split(',').any(|id|id==item)) {
+            let mut diagnostic = crate::chapter_html::diagnose(&text, n);
+            for field in ["free_para_nums", "parse_mode", "text_type"] { diagnostic[field] = d[field].clone(); }
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("test-output/chapter-structures");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join(format!("{item}.json")),serde_json::to_vec_pretty(&diagnostic).unwrap()).unwrap();
+            diagnostic.as_object_mut().unwrap().remove("structuralHtml");
+            println!("Chapter structure only: {}",diagnostic);
         }
+        crate::chapter_html::validate(&text, n, d.get("free_para_nums").map(num))?;
         Ok(
             json!({"id":item,"title":d["title"].as_str().unwrap_or(""),"content":text,"loaded":true,"itemVersion":id(d.get("item_version").unwrap_or(&meta["item_version"]))}),
         )
@@ -559,6 +567,24 @@ fn collect_images(v: &Value, depth: usize, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "Explicit read-only diagnosis of a user-reported free chapter"]
+    async fn live_chapter_structure() {
+        let items = std::env::var("TOMATO_DIAGNOSE_CHAPTER").expect("explicit chapter IDs required");
+        let app = AppContent::new(Arc::new(Transport::default()));
+        let mut failures = Vec::new();
+        for item in items.split(',') {
+            match app.chapter(item).await {
+                Ok(v) => println!("Chapter {item}: loaded={}, content bytes={}", v["loaded"], v["content"].as_str().unwrap_or_default().len()),
+                Err(e) if e == "官方正文段落不完整，未标记已读" => {
+                    println!("Chapter {item}: structure rejected"); failures.push(item.to_owned());
+                }
+                Err(e) => panic!("Chapter {item}: {e}; stopping without retries"),
+            }
+        }
+        assert!(failures.is_empty(), "Rejected chapters: {:?}", failures);
+    }
+
     #[test]
     fn recorded_alignment_keeps_exact_ids_and_milliseconds() {
         let raw = json!({"para_match_data":{"item_ids":{"7325015266541423678":{"728":7417131808128830488u64}},"text_para_match_data":{"7325015266541423678":[{"item_id":7417131808128830488u64,"item_idx":728,"start_time":227170}]}}});

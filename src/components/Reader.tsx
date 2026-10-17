@@ -7,8 +7,11 @@ import type { SpeechState } from '../lib/speech';
 import { CommentsPanel } from './OfficialPanel';
 import { OfficialAudioPlayer } from './OfficialAudioPlayer';
 import { OfficialTtsPlayer } from './OfficialTtsPlayer';
+import { LocalTtsPlayer } from './LocalTtsPlayer';
+import type { LocalSpeechState } from '../lib/localSpeech';
 import { useParagraphBubbles, ParagraphCommentsPanel } from './ParagraphComments';
 import { readingParagraph } from '../lib/readerPosition';
+import { updateMediaSessionMetadata, setMediaSessionPlaybackState, updateMediaSessionHandlers, clearMediaSession } from '../lib/mediaSession';
 
 export function Reader({ book, index, prefs, initialProgress, onJump, onBack, onSave, onSync, onRefreshCloud, onReadHistory, historyBusy, cloudRefreshing, canSync, syncStatus, loading, loadError, onRetry, onOfficial, settings, notice }: {
   book: Book; index: number; prefs: Preferences; initialProgress?: ReadingProgress;
@@ -24,14 +27,17 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   const [showSettings, setShowSettings] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showAudio, setShowAudio] = useState(false);
-  const [activeAudioTab, setActiveAudioTab] = useState<'speech' | 'tts' | 'audio' | 'auto'>('speech');
-  const [openedPlayers, setOpenedPlayers] = useState({ tts: false, audio: false });
-  const [playbackSession, setPlaybackSession] = useState<'tts' | 'audio' | null>(null);
+  const [activeAudioTab, setActiveAudioTab] = useState<'speech' | 'kokoro' | 'tts' | 'audio' | 'auto'>('speech');
+  const [openedPlayers, setOpenedPlayers] = useState({ tts: false, audio: false, kokoro: false });
+  const [playbackSession, setPlaybackSession] = useState<'tts' | 'audio' | 'kokoro' | null>(null);
+  const [kokoroState, setKokoroState] = useState<LocalSpeechState>({ status: 'stopped', paragraph: -1, unit: 0 });
+  const [kokoroStopSignal, setKokoroStopSignal] = useState(0);
+  const kokoroControls = useRef<{ toggle: () => void; play: () => void; pause: () => void } | null>(null);
   const [pausedAuto, setPausedAuto] = useState<'off' | 'scroll' | 'page'>('off');
   const [ttsStopSignal, setTtsStopSignal] = useState(0);
   const [recordedStopSignal, setRecordedStopSignal] = useState(0);
-  const ttsControls = useRef<{ toggle: () => void } | null>(null);
-  const recordedControls = useRef<{ toggle: () => void } | null>(null);
+  const ttsControls = useRef<{ toggle: () => void; play: () => void; pause: () => void } | null>(null);
+  const recordedControls = useRef<{ toggle: () => void; play: () => void; pause: () => void; previous: () => void; next: () => void; seek: (seconds: number) => void; metadata: () => { title: string; artist: string; album: string } | null } | null>(null);
   const [followEstimated, setFollowEstimated] = useState(false);
   const [ttsActiveParagraph, setTtsActiveParagraph] = useState(-1);
   const [ttsLoading, setTtsLoading] = useState(false);
@@ -103,12 +109,13 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   };
   const currentActiveParagraph = speech.status === 'playing'
     ? speech.paragraph
+    : kokoroState.status === 'playing' ? kokoroState.paragraph
     : ttsPlaying && followEstimated
       ? ttsActiveParagraph
       : -1;
   const isAudioActive = speech.status !== 'stopped' || playbackSession !== null || auto !== 'off' || pausedAuto !== 'off';
-  const miniPlaying = speech.status === 'playing' || ttsPlaying || officialAudioPlaying || auto !== 'off';
-  const miniLoading = playbackSession === 'tts' ? ttsLoading : playbackSession === 'audio' ? recordedLoading : false;
+  const miniPlaying = speech.status === 'playing' || kokoroState.status === 'playing' || ttsPlaying || officialAudioPlaying || auto !== 'off';
+  const miniLoading = playbackSession === 'kokoro' ? kokoroState.status === 'loading' : playbackSession === 'tts' ? ttsLoading : playbackSession === 'audio' ? recordedLoading : false;
   const miniAction = miniLoading ? '取消加载' : miniPlaying ? '暂停播放' : '继续播放';
   useEffect(() => { setTtsActiveParagraph(-1); setTtsProgressText(''); setPausedAuto('off'); }, [book.id, chapter.id]);
   useEffect(() => {
@@ -157,14 +164,14 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
       if (e.altKey || e.metaKey || (e.target instanceof HTMLElement && (e.target.matches('input,textarea,select,button') || e.target.isContentEditable))) return;
       if (e.key === 'Escape') { savePosition(); stop(); setAuto('off'); latest.current.onBack(); return; }
       if (!['ArrowRight','ArrowLeft','PageDown','PageUp',' '].includes(e.key)) return;
-      e.preventDefault(); setAuto('off');
+      e.preventDefault();
       const direction = e.key === 'ArrowLeft' || e.key === 'PageUp' ? -1 : 1;
       const el = canvas.current;
       if (e.ctrlKey) { stop(); latest.current.onJump(latest.current.index + direction); }
       else if (el) {
         const atEdge = direction > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 2 : el.scrollTop <= 2;
         if (atEdge) { stop(); latest.current.onJump(latest.current.index + direction); }
-        else el.scrollBy({ top: direction * el.clientHeight * .85, behavior: 'smooth' });
+        else { setAuto('off'); el.scrollBy({ top: direction * el.clientHeight * .85, behavior: 'smooth' }); }
       }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
@@ -276,7 +283,60 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   };
   const collapseChapters = useCallback(() => setShowChapters(false), []);
   const expandChapters = useCallback(() => { setShowChapters(true); setShowSettings(false); setShowComments(false); setSelectedParagraph(null); }, []);
-  const jump = useCallback((i: number) => { savePosition(); stop(); setAuto('off'); latest.current.onJump(i); }, []);
+  const jump = useCallback((i: number) => {
+    if (i < 0 || i >= latest.current.book.chapters.length || i === latest.current.index) return;
+    savePosition(); stop(); latest.current.onJump(i);
+  }, []);
+
+  useEffect(() => {
+    if (!isAudioActive) {
+      clearMediaSession();
+      return;
+    }
+    updateMediaSessionMetadata((playbackSession === 'audio' ? recordedControls.current?.metadata() : null) ?? {
+      title: chapter.title,
+      artist: book.author || '番茄小说',
+      album: book.title,
+      artworkUrl: book.coverUrl,
+    });
+    setMediaSessionPlaybackState(miniPlaying ? 'playing' : 'paused');
+    updateMediaSessionHandlers({
+      onPlay: () => {
+        if (miniPlaying || miniLoading) return;
+        if (playbackSession === 'audio') { recordedControls.current?.play(); return; }
+        if (speech.status === 'paused') engine.current?.resume();
+        else if (playbackSession === 'kokoro') kokoroControls.current?.play();
+        else if (playbackSession === 'tts') ttsControls.current?.play();
+        else if (pausedAuto !== 'off') { setAuto(pausedAuto); setPausedAuto('off'); }
+        else toggleSpeech();
+      },
+      onPause: () => {
+        if (!miniPlaying && !miniLoading) return;
+        if (playbackSession === 'audio') { recordedControls.current?.pause(); return; }
+        if (speech.status === 'playing') engine.current?.pause();
+        else if (playbackSession === 'kokoro') kokoroControls.current?.pause();
+        else if (playbackSession === 'tts') ttsControls.current?.pause();
+        else if (auto !== 'off') { setPausedAuto(auto); setAuto('off'); }
+      },
+      onPreviousTrack: () => {
+        if (playbackSession === 'audio') { recordedControls.current?.previous(); return; }
+        if (index > 0) jump(index - 1);
+      },
+      onNextTrack: () => {
+        if (playbackSession === 'audio') { recordedControls.current?.next(); return; }
+        if (index + 1 < book.chapters.length) jump(index + 1);
+      },
+      onSeekTo: playbackSession === 'audio' ? details => { if (details.seekTime !== undefined) recordedControls.current?.seek(details.seekTime); } : undefined,
+      onStop: () => {
+        stop();
+        setAuto('off');
+      },
+    });
+    return () => {
+      clearMediaSession();
+    };
+  }, [isAudioActive, miniPlaying, miniLoading, officialAudioText, speech.status, playbackSession, auto, pausedAuto, chapter.title, book.title, book.author, book.coverUrl, index, book.chapters.length, jump]);
+
   return <div className="reader-layout">
     <header className="reader-topbar">
       <button className="text-action" onClick={() => { savePosition(); stop(); onBack(); }}><ArrowLeft size={18}/> 返回书架</button>
@@ -289,6 +349,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
           <span className="mini-pill-text">
             {speech.status === 'playing' ? `电脑朗读: 第 ${speech.paragraph + 1}/${paragraphs.length} 段 (${paragraphs.length ? Math.round(((speech.paragraph + 1) / paragraphs.length) * 100) : 0}%)` :
              speech.status === 'paused' ? '电脑朗读已暂停' :
+             playbackSession === 'kokoro' ? (kokoroState.status === 'loading' ? '离线语音准备中' : kokoroState.status === 'playing' ? `离线朗读: 第 ${kokoroState.paragraph + 1}/${paragraphs.length} 段` : '离线朗读已暂停') :
              playbackSession === 'tts' ? (ttsLoading ? '番茄AI音频加载中' : ttsPlaying ? (ttsProgressText || '番茄AI朗读中') : '番茄AI已暂停') :
              playbackSession === 'audio' ? (recordedLoading ? '官方有声加载中' : officialAudioPlaying ? (officialAudioText || '官方有声播放中') : '官方有声已暂停') :
              auto !== 'off' && autoHeld ? '按住左键，自动阅读暂缓中' :
@@ -299,6 +360,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
             e.stopPropagation();
             if (speech.status === 'playing') engine.current?.pause();
             else if (speech.status === 'paused') engine.current?.resume();
+            else if (playbackSession === 'kokoro') kokoroControls.current?.toggle();
             else if (playbackSession === 'tts') ttsControls.current?.toggle();
             else if (playbackSession === 'audio') recordedControls.current?.toggle();
             else if (auto !== 'off') { setPausedAuto(auto); setAuto('off'); }
@@ -336,6 +398,9 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
               onClick={() => setActiveAudioTab('speech')}
             >
               <Volume2 size={15}/> 电脑语音
+            </button>
+            <button type="button" className={`drawer-tab-btn ${activeAudioTab === 'kokoro' ? 'active' : ''}`} onClick={() => { setActiveAudioTab('kokoro'); setOpenedPlayers(p => ({ ...p, kokoro: true })); }}>
+              <Headphones size={15}/> Kokoro 离线语音
             </button>
             {book.source === 'official' && (
               <button
@@ -461,6 +526,16 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
             </div>
           </div>
 
+          {openedPlayers.kokoro && <div className="drawer-tab-panel" style={{ display: activeAudioTab === 'kokoro' ? 'block' : 'none' }}>
+            <LocalTtsPlayer key={book.id} bookId={book.id} chapterId={chapter.id} nextChapterId={book.chapters[index + 1]?.id} paragraphs={paragraphs}
+              disabled={loading || !!loadError || !chapter.content} stopSignal={audioStopSignal + kokoroStopSignal} controls={kokoroControls}
+              fromParagraph={() => { const top = canvas.current?.getBoundingClientRect().top ?? 0; return Math.max(0, readingParagraph(paragraphRefs.current, top)); }}
+              onStart={() => { continueSpeech.current = false; engine.current?.stop(); setAuto('off'); setPausedAuto('off'); setTtsStopSignal(n => n + 1); setRecordedStopSignal(n => n + 1); setPlaybackSession('kokoro'); }}
+              onNext={() => { savePosition(); setAuto('off'); latest.current.onJump(latest.current.index + 1); }}
+              onState={state => { setKokoroState(state); if (state.status === 'stopped') setPlaybackSession(current => current === 'kokoro' ? null : current); else setPlaybackSession('kokoro'); }}
+            />
+          </div>}
+
           {/* 首次选择后常驻，收起面板继续播放。 */}
           {book.source === 'official' && openedPlayers.tts && (
             <div className="drawer-tab-panel" style={{ display: activeAudioTab === 'tts' ? 'block' : 'none' }}>
@@ -476,7 +551,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
                 onBusyChange={setTtsLoading}
                 controls={ttsControls}
                 stopSignal={audioStopSignal + ttsStopSignal}
-                onStart={() => { continueSpeech.current = false; engine.current?.stop(); setAuto('off'); setPausedAuto('off'); setRecordedStopSignal(n => n + 1); setPlaybackSession('tts'); }}
+                onStart={() => { continueSpeech.current = false; engine.current?.stop(); setAuto('off'); setPausedAuto('off'); setRecordedStopSignal(n => n + 1); setKokoroStopSignal(n => n + 1); setPlaybackSession('tts'); }}
                 onNext={() => { savePosition(); setAuto('off'); latest.current.onJump(latest.current.index + 1); }}
                 onProgress={({ activeParagraph, statusText }) => {
                   setTtsActiveParagraph(activeParagraph);
@@ -499,7 +574,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
                 controls={recordedControls}
                 stopSignal={audioStopSignal + recordedStopSignal}
                 notice={notice}
-                onStart={() => { continueSpeech.current = false; engine.current?.stop(); setAuto('off'); setPausedAuto('off'); setTtsStopSignal(n => n + 1); setPlaybackSession('audio'); }}
+                onStart={() => { continueSpeech.current = false; engine.current?.stop(); setAuto('off'); setPausedAuto('off'); setTtsStopSignal(n => n + 1); setKokoroStopSignal(n => n + 1); setPlaybackSession('audio'); }}
                 onPlaybackStateChange={(playing, text) => {
                   setOfficialAudioPlaying(playing);
                   setOfficialAudioText(text);
@@ -602,15 +677,26 @@ const ChapterList = memo(function ChapterList({ chapters, index, onJump, onColla
   useLayoutEffect(() => {
     const list = scroll.current;
     if (!list || !visible) return;
+    let frame = 0;
     const center = () => {
-      const row = current.current;
-      if (!row || !list.clientHeight) return;
-      const target = row.getBoundingClientRect(), bounds = list.getBoundingClientRect();
-      list.scrollTop += target.top - bounds.top - (list.clientHeight - target.height) / 2;
+      cancelAnimationFrame(frame);
+      let passes = 0, stable = 0;
+      const settle = () => {
+        const row = current.current;
+        if (!row || !list.clientHeight) return;
+        const target = row.getBoundingClientRect(), bounds = list.getBoundingClientRect();
+        const offset = target.top - bounds.top - (list.clientHeight - target.height) / 2;
+        list.scrollTop += offset;
+        stable = Math.abs(offset) < 1 ? stable + 1 : 0;
+        // content-visibility first uses estimated row heights. Recheck after
+        // rendering those rows, then stop rather than following manual scrolls.
+        if (++passes < 8 && stable < 2) frame = requestAnimationFrame(settle);
+      };
+      settle();
     };
     center();
     const observer = new ResizeObserver(center); observer.observe(list);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, [index, visible, chapters.length]);
   return <aside className="chapters-list" id="reader-chapters" aria-label="章节目录列表"><div className="chapters-header"><div><span>章节目录</span><small>共 {chapters.length} 章</small></div><button className="chapter-collapse" aria-label="收起目录" aria-expanded="true" aria-controls="reader-chapters" onClick={onCollapse}><ChevronLeft size={17}/></button></div>
     <div className="chapter-scroll" ref={scroll}>{chapters.map((chapter, i) => <button key={chapter.id} ref={i === index ? current : null} aria-current={i === index ? 'true' : undefined} className={i === index ? 'chapter-item current' : 'chapter-item'} onClick={() => onJump(i)}>

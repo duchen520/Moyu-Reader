@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { installRankingMock } from './ranking-fixture.mjs';
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '1483', '--strictPort'], { stdio: 'ignore' });
 let browser, passed = 0;
@@ -44,6 +45,7 @@ async function pageFixture({ blockChapter = false, saved = true } = {}) {
       throw new Error('Unexpected mock command ' + command);
     } };
   }, { blockChapter, saved });
+  await installRankingMock(page);
   await page.goto('http://127.0.0.1:1483');
   await page.getByRole('button', { name: '账号管理', exact: true }).click();
   await page.getByRole('button', { name: '退出账号', exact: true }).waitFor();
@@ -67,6 +69,19 @@ try {
     assert.equal((await stored(page)).scrollRatio, .65);
     assert.equal((await stored(page)).paragraphIndex, 20);
     check('Leaving an unloaded chapter preserves the previous reading position');
+    await page.locator('.side-nav button').filter({ hasText: '排行榜单' }).click();
+    await page.locator('.ranking-card').first().waitFor();
+    assert.equal(await page.locator('.ranking-card button:disabled').count(), 0);
+    await page.getByRole('button', { name: /找书发现/ }).click();
+    await page.getByRole('button', { name: '通过番茄链接或书籍ID直接打开作品' }).click();
+    await page.getByLabel('打开正版作品').fill('123456789');
+    assert.equal(await page.getByRole('button', { name: '打开作品', exact: true }).isEnabled(), true);
+    await page.evaluate(() => window.__release.chapter());
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.discovery-screen').count(), 1);
+    await page.getByRole('button', { name: '打开作品', exact: true }).click();
+    await page.locator('.story-content p').first().waitFor();
+    check('Leaving a pending chapter keeps ranking and discovery actions usable; late content cannot reopen the reader');
     await page.close();
   }
   {
@@ -81,7 +96,7 @@ try {
     assert.ok(Math.abs((await stored(page)).scrollRatio - .4) < .01);
     check('Sidebar navigation flushes a scroll update before the debounce expires'); await page.close();
   }
-  for (const stage of ['book', 'account']) {
+  for (const stage of ['book', 'progress']) {
     const page = await pageFixture();
     await page.evaluate(stage => { window.__hold[stage] = true; }, stage);
     await open(page); await page.waitForFunction(stage => !!window.__release[stage], stage);

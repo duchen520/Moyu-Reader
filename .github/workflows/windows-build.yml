@@ -1,25 +1,49 @@
 name: Build Windows desktop
-on:
+'on':
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, fix/tomato-reader-0.5.17]
   pull_request:
+permissions:
+  contents: read
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
       - run: npm ci
+      - name: Prepare pinned Kokoro CPU engine
+        run: python scripts/prepare-kokoro-engine.py
       - run: npm run test:unit
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --locked
+      - run: npx playwright install chromium
+      - run: npm run test:audit
       - run: npm run tauri build
+      - name: Package portable app with native engine
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $stage = "release-output/Tomato-Reader-v$version-portable"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item src-tauri/target/release/tomato-reader.exe "$stage/tomato-reader.exe"
+          Copy-Item src-tauri/resources "$stage/resources" -Recurse
+          Compress-Archive -Path "$stage/*" -DestinationPath "release-output/tomato-reader-v$version-portable.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: Tomato-Reader-Windows-experimental
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            release-output/*.zip
           if-no-files-found: error

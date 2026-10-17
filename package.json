@@ -1,7 +1,7 @@
 {
   "name": "tomato-reader-desktop",
   "private": true,
-  "version": "0.5.9",
+  "version": "0.5.17",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,7 +21,12 @@
     "test:themes": "node scripts/test-themes.mjs",
     "test:tts": "node scripts/test-official-tts.mjs",
     "test:reader-features": "node scripts/test-reader-features.mjs",
-    "test:reading-controls": "node scripts/test-reading-controls.mjs"
+    "test:reading-controls": "node scripts/test-reading-controls.mjs",
+    "test:large-txt": "node scripts/test-large-txt.mjs",
+    "test:loading": "node scripts/test-loading.mjs",
+    "test:kokoro": "node scripts/test-kokoro.mjs",
+    "test:covers": "node scripts/test-covers.mjs",
+    "test:audit": "node scripts/test-0517-audit.mjs && node scripts/test-0517-playback.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

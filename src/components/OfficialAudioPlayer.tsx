@@ -2,11 +2,12 @@ import type { RefObject } from 'react';
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { official, errorMessage } from '../lib/official';
 import type { AudioCatalog, AudioEpisode, AudioAlignment } from '../lib/official';
-import { readAudioProgress, saveAudioProgress, playableUrl, formatDuration } from '../lib/media';
+import { readAudioProgress, saveAudioProgress, playableUrl, formatDuration, base64ToBlobUrl } from '../lib/media';
+import { setMediaSessionPosition } from '../lib/mediaSession';
 
 export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSignal, onStart, notice, onPlaybackStateChange, controls, onBusyChange }: {
   onBusyChange?: (busy: boolean) => void;
-  controls?: RefObject<{ toggle: () => void } | null>;
+  controls?: RefObject<{ toggle: () => void; play: () => void; pause: () => void; previous: () => void; next: () => void; seek: (seconds: number) => void; metadata: () => { title: string; artist: string; album: string } | null } | null>;
   bookId: string; chapterId?: string; chapterTitle?: string; stopSignal: number;
   onStart: () => void; notice: (s: string) => void;
   onPlaybackStateChange?: (isPlaying: boolean, statusText: string) => void;
@@ -33,6 +34,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
   const directoryAlbum = useRef('');
   const audio = useRef<HTMLAudioElement>(null);
   const request = useRef(0);
+  const requestBusy = useRef(false);
   const pendingPlay = useRef(false);
   const fallbackUrls = useRef<string[]>([]);
   const lastSave = useRef(0);
@@ -52,7 +54,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     try { saveAudioProgress(context.bookId, value); }
     catch { callbacks.current.notice('听书位置保存失败，本次播放仍可继续。'); }
   };
-  const halt = () => { request.current++; pendingPlay.current = false; audio.current?.pause(); save(); setBusy(false); callbacks.current.onPlaybackStateChange?.(false, '官方音频已暂停'); };
+  const halt = () => { request.current++; requestBusy.current = false; pendingPlay.current = false; audio.current?.pause(); save(); setBusy(false); callbacks.current.onPlaybackStateChange?.(false, '官方音频已暂停'); };
   useEffect(() => {
     let cancelled = false; setChecking(true); setError(''); setCatalog(null); saved.current = readAudioProgress(bookId);
     official.audioCatalog(bookId).then(data => {
@@ -122,7 +124,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     if(audio.current){audio.current.removeAttribute('src');audio.current.load();}
     releaseAudio(); fallbackUrls.current = [];
     setSource(''); setTime(0); setDuration(0);
-    const generation = ++request.current; setBusy(true); setError(''); setStatus('正在取得本集官方播放信息…'); pendingPlay.current = true;
+    const generation = ++request.current; requestBusy.current = true; setBusy(true); setError(''); setStatus('正在取得本集官方播放信息…'); pendingPlay.current = true;
     callbacks.current.onStart();
     try {
       const info = await official.audioPlay(ep.id);
@@ -131,23 +133,43 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
       let urls = info.urls.map(playableUrl).filter((u): u is string => !!u);
       if (info.audioBase64) {
         if (info.mime !== 'audio/mp4' || info.audioBase64.length > 45 * 1024 * 1024) throw new Error('官方音频格式或大小不受支持');
-        const raw = atob(info.audioBase64), bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        objectUrl.current = URL.createObjectURL(new Blob([bytes], { type: 'audio/mp4' }));
+        const url = await base64ToBlobUrl(info.audioBase64, 'audio/mp4');
+        if (generation !== request.current) { URL.revokeObjectURL(url); return; }
+        objectUrl.current = url;
         urls = [objectUrl.current];
       }
       if (!urls.length) throw new Error('官方没有提供可播放的 HTTPS 音频地址');
       fallbackUrls.current = urls.slice(1); activeEpisode.current=ep; activeContext.current={bookId,albumId}; setIndex(target); setSource(urls[0]);
       if(audio.current){audio.current.src=urls[0];audio.current.load();} setStatus('播放信息已取得，正在加载音频');
     } catch (e) { if (generation === request.current) { pendingPlay.current = false; setError(errorMessage(e)); setStatus('本集试播未成功，可继续使用电脑朗读'); } }
-    finally { if (generation === request.current) setBusy(false); }
+    finally { if (generation === request.current) { requestBusy.current = false; setBusy(false); } }
   };
   useImperativeHandle(controls, () => ({ toggle: () => {
     const el = audio.current;
     if (busy || (el && !el.paused)) halt();
     else if (el?.src && metadataReady.current) { callbacks.current.onStart(); void el.play().catch(() => setStatus('请展开面板后点击播放')); }
     else void play(index);
-  } }));
+  },
+    play: () => {
+      const el=audio.current;
+      if (requestBusy.current || !el || !el.paused) return;
+      if (el.src && metadataReady.current) { callbacks.current.onStart(); void el.play().catch(() => setStatus('请展开面板后点击播放')); }
+      else void play(index);
+    },
+    pause: halt,
+    previous: () => { if (index > 0) void play(index - 1); },
+    next: () => { if (index + 1 < episodes.length) void play(index + 1); },
+    seek: seconds => {
+      const el = audio.current;
+      if (el && metadataReady.current && Number.isFinite(seconds) && Number.isFinite(el.duration)) {
+        el.currentTime = Math.max(0, Math.min(seconds, el.duration));
+      }
+    },
+    metadata: () => {
+      const album = catalog?.albums.find(a => a.id === albumId);
+      return activeEpisode.current ? { title: activeEpisode.current.title, artist: album?.narrator || '官方真人主播', album: album?.name || '番茄有声' } : null;
+    },
+  }));
   const metadata = () => {
     const el = audio.current; if (!el) return;
     setDuration(Number.isFinite(el.duration) ? el.duration : 0); el.playbackRate = rate;
@@ -165,6 +187,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     if (next) { pendingPlay.current = true; setSource(next);if(audio.current){audio.current.src=next;audio.current.load();}return; }
     setError('音频播放失败，可能是地址过期、格式受限或网络不可达；可重新试播刷新地址。'); setStatus('音频播放失败');
   };
+
   return <div className="official-audio">
     <div className="playback-row"><strong>番茄官方真人有声版</strong><button disabled={checking || busy} onClick={() => { halt(); setRetry(n => n+1); }}>重新检查</button></div>
     <p className="audio-status" role="status">{status}</p>
@@ -185,7 +208,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     <audio ref={audio} controls preload="metadata" onLoadedMetadata={metadata}
       onPlay={() => { callbacks.current.onStart(); setStatus('正在播放官方音频'); callbacks.current.onPlaybackStateChange?.(true, `官方有声: 第 ${index + 1} 集`); }}
       onPause={() => { save(); if(source) setStatus('官方音频已暂停'); callbacks.current.onPlaybackStateChange?.(false, '官方音频已暂停'); }}
-      onTimeUpdate={() => { const el=audio.current; if(!el)return;setTime(el.currentTime);if(Date.now()-lastSave.current>=1000){lastSave.current=Date.now();save();} }}
+      onTimeUpdate={() => { const el=audio.current; if(!el)return;setTime(el.currentTime);setMediaSessionPosition({ duration: el.duration, playbackRate: rate, position: el.currentTime });if(Date.now()-lastSave.current>=1000){lastSave.current=Date.now();save();} }}
       onError={mediaError} onEnded={() => { if(!source || !activeEpisode.current || !audio.current?.ended)return;save(); callbacks.current.onPlaybackStateChange?.(false, '本集播放结束'); if(continuous && index+1<episodes.length) void play(index+1);else setStatus('本集播放结束'); }}/>
     {source && <span className="audio-time">{formatDuration(time)} / {formatDuration(duration)}</span>}
     {error && <p className="audio-error" role="alert">{error}</p>}

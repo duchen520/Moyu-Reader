@@ -34,7 +34,7 @@ async function fixture(){
   await installRankingMock(page);
   await page.goto('http://127.0.0.1:1488');return page;
 }
-const stored=page=>page.evaluate(()=>JSON.parse(localStorage.getItem('tomato-reader-v01:books')??'[]').map(b=>b.id));
+const stored=page=>page.evaluate(async()=>{const {storage}=await import('/src/lib/storage.ts');return storage.books().map(b=>b.id);});
 const rankings=page=>page.locator('button.nav-btn').filter({hasText:'排行榜单'}).click();
 const shelf=page=>page.getByRole('button',{name:/本地书架/}).click();
 try{

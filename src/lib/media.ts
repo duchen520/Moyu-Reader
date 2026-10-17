@@ -23,3 +23,16 @@ export function readAudioProgress(bookId: string): AudioProgress | null {
   } catch { return null; }
 }
 export function saveAudioProgress(bookId: string, value: AudioProgress) { localStorage.setItem(PREFIX + bookId, JSON.stringify(value)); }
+
+export async function base64ToBlobUrl(base64: string, mime: string): Promise<string> {
+  try {
+    const res = await fetch(`data:${mime};base64,${base64}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    const raw = atob(base64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  }
+}

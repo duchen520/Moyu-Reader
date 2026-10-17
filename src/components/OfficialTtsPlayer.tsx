@@ -1,12 +1,13 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { official, errorMessage } from '../lib/official';
+import { base64ToBlobUrl } from '../lib/media';
 
 interface Props {
   bookId: string; chapterId: string; chapterTitle: string; nextChapterId?: string;
   disabled: boolean; stopSignal: number; onStart: () => void; onNext: () => void;
   onBusyChange?: (busy: boolean) => void;
-  controls?: RefObject<{ toggle: () => void } | null>;
+  controls?: RefObject<{ toggle: () => void; play: () => void; pause: () => void } | null>;
   paragraphs?: string[];
   onProgress?: (data: { activeParagraph: number; percent: number; isPlaying: boolean; statusText: string }) => void;
   onPlaybackStateChange?: (isPlaying: boolean) => void;
@@ -42,6 +43,7 @@ export function OfficialTtsPlayer(props: Props) {
   const latest = useRef(props); latest.current = props;
   useEffect(() => { latest.current.onBusyChange?.(busy); }, [busy]);
   const request = useRef(0);
+  const requestBusy = useRef(false);
   const objectUrl = useRef('');
   const context = useRef<(Position & { bookId: string }) | null>(null);
   const ready = useRef(false);
@@ -56,7 +58,7 @@ export function OfficialTtsPlayer(props: Props) {
     catch { setError('AI听书位置保存失败，本次播放仍可继续。'); }
   };
   const halt = () => {
-    request.current++; pendingPlay.current = false; next.current = null;
+    request.current++; requestBusy.current = false; pendingPlay.current = false; next.current = null;
     save(); audio.current?.pause(); setBusy(false); setPlaying(false);
     latest.current.onPlaybackStateChange?.(false);
   };
@@ -67,7 +69,7 @@ export function OfficialTtsPlayer(props: Props) {
     objectUrl.current = '';
   };
   const play = async () => {
-    if (!tone || props.disabled) return;
+    if (!tone || props.disabled || requestBusy.current || (audio.current && !audio.current.paused)) return;
     const el = audio.current;
     if (el?.src && ready.current && context.current?.chapterId === props.chapterId && context.current.toneId === tone) {
       props.onStart();
@@ -75,7 +77,7 @@ export function OfficialTtsPlayer(props: Props) {
       return;
     }
     clear(); setError(''); setBusy(true); setStatus('正在加载本章番茄AI音频…');
-    const generation = ++request.current;
+    const generation = ++request.current; requestBusy.current = true;
     const { bookId, chapterId } = props;
     props.onStart();
     try {
@@ -83,15 +85,15 @@ export function OfficialTtsPlayer(props: Props) {
       if (generation !== request.current) return;
       if (info.itemId !== chapterId || info.toneId !== tone) throw Error('AI音频与当前章节或音色不匹配');
       if (info.mime !== 'audio/mp4' || !info.audioBase64 || info.audioBase64.length > 45 * 1024 * 1024) throw Error('官方未返回支持的AI音频');
-      const raw = atob(info.audioBase64), bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-      objectUrl.current = URL.createObjectURL(new Blob([bytes], { type: 'audio/mp4' }));
+      const url = await base64ToBlobUrl(info.audioBase64, 'audio/mp4');
+      if (generation !== request.current) { URL.revokeObjectURL(url); return; }
+      objectUrl.current = url;
       context.current = { bookId, chapterId, toneId: tone, seconds: 0 };
       pendingPlay.current = true;
       if (audio.current) { audio.current.src = objectUrl.current; audio.current.load(); }
       setStatus('AI音频已取得，正在准备播放…');
     } catch (e) { if (generation === request.current) { setError(errorMessage(e)); setStatus('本章AI朗读未成功，可重试或使用电脑朗读'); } }
-    finally { if (generation === request.current) setBusy(false); }
+    finally { if (generation === request.current) { requestBusy.current = false; setBusy(false); } }
   };
   useEffect(() => {
     let cancelled = false; setChecking(true); setError('');
@@ -122,7 +124,7 @@ export function OfficialTtsPlayer(props: Props) {
     window.addEventListener('pagehide', saveOnClose);
     return () => { document.removeEventListener('visibilitychange', saveOnHide); window.removeEventListener('pagehide', saveOnClose); clear(); };
   }, []);
-  useImperativeHandle(props.controls, () => ({ toggle: () => { if (busy || (audio.current && !audio.current.paused)) halt(); else void play(); } }));
+  useImperativeHandle(props.controls, () => ({ toggle: () => { if (busy || (audio.current && !audio.current.paused)) halt(); else void play(); }, play: () => { void play(); }, pause: halt }));
   const metadata = () => {
     const el = audio.current, current = context.current;
     if (!el || !current || el.currentSrc !== objectUrl.current) return;

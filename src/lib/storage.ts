@@ -1,4 +1,5 @@
-import type { Book, Preferences, ReadingProgress } from '../types';
+import type { Preferences, ReadingProgress } from '../types';
+import { initializeBooks, savedBooks, addBooks, removeBook } from './bookDatabase';
 
 const PREFIX = 'tomato-reader-v01:';
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -20,8 +21,10 @@ function write<T>(key: string, value: T) {
 }
 
 export const storage = {
-  books: () => read<Book[]>('books', []),
-  saveBooks: (books: Book[]) => write('books', books),
+  initializeBooks,
+  books: savedBooks,
+  addBooks,
+  removeBook,
   progress: () => read<Record<string, ReadingProgress>>('progress', {}),
   saveProgress: (value: Record<string, ReadingProgress>) => write('progress', value),
   preferences: () => read<Preferences>('preferences', DEFAULT_PREFERENCES),

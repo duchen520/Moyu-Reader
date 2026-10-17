@@ -3879,13 +3879,14 @@ dependencies = [
 
 [[package]]
 name = "tomato-reader"
-version = "0.5.9"
+version = "0.5.17"
 dependencies = [
  "aes",
  "base64 0.22.1",
  "cbc",
  "ctr",
  "flate2",
+ "html5ever",
  "httpdate",
  "keyring",
  "md-5",

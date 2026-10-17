@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { mkdir, readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
-// Only local reading is tested. A separate WebView2 profile keeps test books
+// Live checks are explicitly enabled with flags. A separate profile keeps test books
 // and preferences out of the user's normal application data.
 const executable = process.env.TOMATO_NATIVE_EXE ?? resolve('src-tauri/target/release/tomato-reader.exe');
 const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -34,6 +34,7 @@ try {
   assert.ok((await page.locator('.side-bottom').textContent()).includes(`v${version}`));
   console.log(`PASS Native ${version} window renders through WebView2 with the real Tauri bridge`);
   if (process.env.TOMATO_NATIVE_CHECK_RANKINGS === '1') {
+    const rankStarted = Date.now();
     await page.locator('.side-nav button').filter({ hasText: '排行榜单' }).click();
     await page.locator('.ranking-card').nth(9).waitFor({ timeout: 60000 });
     assert.equal(await page.locator('.ranking-card').count(), 10);
@@ -47,7 +48,7 @@ try {
     }
     assert.ok(coverLoaded, 'Native CSP allows the actual official cover image host');
     assert.ok((await page.locator('.section-subtitle').textContent()).includes('官方版本'));
-    console.log('PASS Native live official rankings load normal Chinese titles, covers and source version');
+    console.log(`PASS Native live official rankings load normal Chinese titles, covers and source version (${Date.now() - rankStarted} ms including background account/shelf requests)`);
     await page.getByRole('button', { name: '加载更多榜单作品', exact: true }).click();
     await page.locator('.ranking-card').nth(19).waitFor({ timeout: 60000 });
     assert.equal(await page.locator('.ranking-card').count(), 20);
@@ -66,6 +67,103 @@ try {
     console.log('PASS Native background prefetch renders the actual cloud shelf (read-only)');
     await page.locator('.side-nav button').filter({ hasText: '本地书架' }).click();
   }
+  if (process.env.TOMATO_NATIVE_CHECK_SEARCH === '1') {
+    await page.locator('.side-nav button').filter({ hasText: '找书发现' }).click();
+    await page.getByLabel('搜索正版小说').fill('十日终焉');
+    const searchStarted = Date.now();
+    await page.getByRole('button', { name: '搜索小说', exact: true }).click();
+    await page.locator('.search-open-btn').first().waitFor({ timeout: 30000 });
+    assert.ok(await page.locator('.search-open-btn').count() > 0);
+    assert.equal(await page.locator('.search-open-btn').first().isEnabled(), true);
+    console.log(`PASS Native official search returns books with usable open buttons (${Date.now() - searchStarted} ms)`);
+    const openStarted = Date.now();
+    await page.locator('.search-open-btn').first().click();
+    await page.locator('.reader-layout').waitFor({ timeout: 45000 });
+    assert.ok(await page.locator('.chapter-item').count() > 0);
+    console.log(`PASS Native search result opens its actual official directory (${Date.now() - openStarted} ms)`);
+    await page.getByRole('button', { name: '返回书架', exact: true }).click();
+    await page.locator('.side-nav button').filter({ hasText: '找书发现' }).click();
+    assert.equal(await page.locator('.rec-read-btn').first().isEnabled(), true);
+    console.log('PASS Native leaving a loading official reader keeps discovery buttons enabled');
+    await page.locator('.side-nav button').filter({ hasText: '本地书架' }).click();
+  }
+  if (process.env.TOMATO_NATIVE_CHECK_CHAPTER_MATRIX === '1') {
+    const allCases = JSON.parse(await readFile(new URL('./chapter-cases.json', import.meta.url), 'utf8'));
+    const selected = process.env.TOMATO_NATIVE_MATRIX_ITEMS?.split(',');
+    const cases = selected ? allCases.filter(c => selected.includes(c.itemId)) : allCases;
+    assert.ok(cases.length > 0);
+    // Change only this independent test profile, avoiding unrelated comment calls.
+    await page.getByRole('button', { name: '阅读设置', exact: true }).click();
+    if (await page.locator('#show-paragraph-comments').getAttribute('aria-checked') === 'true') await page.locator('#show-paragraph-comments').click();
+    const observed = await page.evaluate(() => {
+      // Tauri's invoke is read-only. Observe its fetch transport transparently,
+      // passing every request/response unchanged rather than replacing the bridge.
+      const originalFetch = window.fetch.bind(window);
+      window.__nativeLoadedChapter = null; window.__nativeSyncCalls = 0;
+      const observer = async (input, options) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        const command = url.hostname === 'ipc.localhost' ? decodeURIComponent(url.pathname.slice(1)) : '';
+        if (command === 'official_sync_progress') window.__nativeSyncCalls++;
+        const response = await originalFetch(input, options);
+        if (command === 'official_chapter' && response.ok) {
+          const raw = await response.clone().json();
+          if (raw?.id) window.__nativeLoadedChapter = raw.id;
+        }
+        return response;
+      };
+      window.fetch = observer;
+      return window.fetch === observer;
+    });
+    assert.equal(observed, true, 'Native transport observer must actually be installed');
+    let currentBook = null;
+    let completed = 0;
+    for (const entry of cases) {
+      if (entry.bookId !== currentBook) {
+        if (await page.locator('.reader-layout').count()) await page.getByRole('button', { name: '返回书架', exact: true }).click();
+        await page.locator('.side-nav button').filter({ hasText: '找书发现' }).click();
+        await page.getByRole('button', { name: '通过番茄链接或书籍ID直接打开作品' }).click();
+        await page.getByLabel('打开正版作品').fill(entry.bookId);
+        await page.getByRole('button', { name: '打开作品', exact: true }).click();
+        await page.locator('.chapter-item').nth(entry.index).waitFor({ timeout: 45000 });
+        currentBook = entry.bookId;
+      }
+      const expectedTitle = await page.locator('.chapter-item').nth(entry.index).locator('span').last().textContent();
+      await page.locator('.chapter-item').nth(entry.index).click();
+      // Wait for actual text, not just the directory/title; use element waits to
+      // preserve the native application's strict Content Security Policy.
+      await page.locator('.page-paper h1').filter({ hasText: expectedTitle }).waitFor({ timeout: 60000 });
+      await page.locator('.story-content p').nth(entry.paragraphs - 1).waitFor({ timeout: 60000 });
+      assert.equal(await page.locator('.story-content p').count(), entry.paragraphs, `paragraph count: ${entry.itemId}`);
+      assert.equal(await page.evaluate(() => window.__nativeLoadedChapter), entry.itemId);
+      assert.equal(await page.getByText('官方正文段落不完整，未标记已读', { exact: true }).count(), 0);
+      assert.ok((await page.locator('.sync-bar').textContent()).includes('自动上传已关闭'));
+      assert.ok(await page.locator('.story-content p').evaluateAll(ps => ps.every(p => p.textContent.trim().length > 0)));
+      if (entry.itemId === '7590221427400262168') await page.screenshot({ path: `test-output/native-${version}-reported-chapter.png` });
+      completed++;
+      console.log(`PASS Native real chapter ${entry.itemId}: ${entry.paragraphs} nonempty paragraphs rendered; upload off`);
+    }
+    await page.getByRole('button', { name: '返回书架', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__nativeSyncCalls), 0);
+    console.log(`PASS Native chapter matrix: ${completed}/${cases.length} chapters across ${new Set(cases.map(c => c.bookId)).size} books; zero upload calls`);
+  }
+  if (process.env.TOMATO_NATIVE_CHECK_CHAPTER === '1') {
+    await page.locator('.side-nav button').filter({ hasText: '找书发现' }).click();
+    await page.getByRole('button', { name: '通过番茄链接或书籍ID直接打开作品' }).click();
+    await page.getByLabel('打开正版作品').fill('6982529841564224526');
+    await page.getByRole('button', { name: '打开作品', exact: true }).click();
+    await page.locator('.chapter-item').nth(7).click({ timeout: 45000 });
+    await page.locator('.page-paper h1').filter({ hasText: '第8章' }).waitFor({ timeout: 60000 });
+    await page.locator('.story-content p').nth(76).waitFor({ timeout: 60000 });
+    assert.equal(await page.locator('.story-content p').count(), 77);
+    assert.equal(await page.getByText('官方正文段落不完整，未标记已读', { exact: true }).count(), 0);
+    assert.ok((await page.locator('.sync-bar').textContent()).includes('自动上传已关闭'));
+    console.log('PASS Native reported chapter 8 renders all 77 text paragraphs with its separate heading (automatic upload off)');
+    await page.locator('.chapter-item').nth(8).click();
+    await page.locator('.page-paper h1').filter({ hasText: '第9章' }).waitFor({ timeout: 60000 });
+    await page.locator('.story-content p').first().waitFor({ timeout: 60000 });
+    console.log('PASS Native adjacent chapter also loads actual text');
+    await page.getByRole('button', { name: '返回书架', exact: true }).click();
+  }
   if (process.env.TOMATO_NATIVE_CHECK_THEMES === '1') {
     await mkdir('test-output', { recursive: true });
     await page.locator('.side-nav button').filter({ hasText: '阅读设置' }).click();
@@ -82,6 +180,51 @@ try {
     }
     await page.locator('.side-nav button').filter({ hasText: '本地书架' }).click();
     console.log('PASS Native WebView2 renders all three themes and updates control color schemes');
+  }
+  if (process.env.TOMATO_NATIVE_CHECK_LARGE_TXT === '1') {
+    const legacy = { id: 'native-legacy-book', title: '桌面旧书迁移', author: '本机测试', source: 'local', description: '', coverStyle: 0, addedAt: 1,
+      chapters: [{ id: 'native-old-1', title: '第一章', content: '第一章旧正文。' }, { id: 'native-old-2', title: '第二章', content: '第二章旧正文。' }] };
+    await page.evaluate(async book => {
+      localStorage.setItem('tomato-reader-v01:books', JSON.stringify([book]));
+      localStorage.setItem('tomato-reader-v01:progress', JSON.stringify({ [book.id]: { chapterIndex: 1, scrollRatio: 0, paragraphIndex: 0, updatedAt: 1 } }));
+      await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase('tomato-reader-library'); request.onsuccess = () => resolve(); request.onerror = () => reject(request.error); });
+    }, legacy);
+    await page.reload();
+    await page.getByRole('button', { name: '阅读 桌面旧书迁移', exact: true }).click();
+    await page.locator('.page-paper h1').filter({ hasText: '第二章' }).waitFor();
+    assert.equal(await page.evaluate(() => localStorage.getItem('tomato-reader-v01:books')), null);
+    await page.getByRole('button', { name: '返回书架', exact: true }).click();
+    console.log('PASS Native legacy TXT migration and previous chapter position');
+    const paragraph = '桌面大文件保存与阅读验证。'.repeat(70);
+    const text = Array.from({ length: 1200 }, (_, i) => `第${i + 1}章 大文件章节\n${Array(8).fill(paragraph).join('\n\n')}\n`).join('');
+    const buffer = Buffer.from(text);
+    assert.ok(buffer.length > 20 * 1024 * 1024);
+    await page.locator('input[type=file]').setInputFiles({ name: '桌面大文件测试.txt', mimeType: 'text/plain', buffer });
+    await page.getByRole('button', { name: '阅读 桌面大文件测试', exact: true }).waitFor({ timeout: 60000 });
+    await page.reload();
+    await page.getByRole('button', { name: '阅读 桌面大文件测试', exact: true }).click({ timeout: 60000 });
+    await page.locator('.story-content p').first().waitFor();
+    assert.equal(await page.locator('.chapter-item').count(), 1200);
+    await page.getByTitle('听书与自动翻页').click();
+    await page.getByRole('button', { name: '自动阅读', exact: true }).click();
+    await page.getByRole('button', { name: '平滑滚动', exact: true }).click();
+    await page.getByRole('button', { name: '收起面板', exact: true }).click();
+    const next = page.getByRole('button', { name: '下一章', exact: true });
+    await next.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    const buttonBox = await next.boundingBox();
+    await page.mouse.click(buttonBox.x + buttonBox.width / 2, buttonBox.y + buttonBox.height / 2);
+    await page.locator('.page-paper h1').filter({ hasText: '第2章' }).waitFor();
+    await delay(350);
+    assert.ok(await page.locator('.reading-canvas').evaluate(el => el.scrollTop) > 0);
+    await page.locator('.chapter-item').nth(8).click();
+    await page.locator('.page-paper h1').filter({ hasText: '第9章' }).waitFor();
+    await delay(350);
+    assert.ok(await page.locator('.reading-canvas').evaluate(el => el.scrollTop) > 0);
+    await page.locator('.audio-mini-pill').getByTitle('停止', { exact: true }).click();
+    await mkdir('test-output', { recursive: true });
+    await page.screenshot({ path: `test-output/native-${version}-large-txt.png` });
+    await page.getByRole('button', { name: '返回书架', exact: true }).click();
+    console.log(`PASS Native ${buffer.length}-byte TXT import, 1200 chapters, reload and uninterrupted automatic reading after button/directory chapter changes`);
   }
   await page.locator('input[type=file]').setInputFiles({
     name: '桌面回归测试.txt', mimeType: 'text/plain',

@@ -1,7 +1,6 @@
 import type { Book, Chapter } from '../types';
 
 const CHAPTER_LINE = /^\s*(第[零〇一二三四五六七八九十百千万两\d]+[章节回卷][^\r\n]{0,48})\s*$/gm;
-const MAX_FILE_BYTES = 1_500_000; // localStorage prototype: prevent easy quota overflow
 
 export function parseNovel(filename: string, text: string): Book {
   const normalized = text.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '').trim();
@@ -34,7 +33,6 @@ export function parseNovel(filename: string, text: string): Book {
 
 export async function importTxt(file: File): Promise<Book> {
   if (!/\.txt$/i.test(file.name)) throw new Error('目前仅支持 .txt 文件。');
-  if (file.size > MAX_FILE_BYTES) throw new Error('当前版本仅支持 1.5 MB 以内的 UTF-8 TXT。后续将改用 SQLite。');
   const text = await file.text();
   if (text.includes('\uFFFD')) throw new Error('检测到乱码：请把 TXT 转成 UTF-8 编码后重新导入。');
   return parseNovel(file.name, text);

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kokoro-pick-directory"
+description = "Enables the kokoro_pick_directory command."
+commands.allow = ["kokoro_pick_directory"]
+
+[[permission]]
+identifier = "deny-kokoro-pick-directory"
+description = "Denies the kokoro_pick_directory command."
+commands.deny = ["kokoro_pick_directory"]
