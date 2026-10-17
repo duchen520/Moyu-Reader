@@ -11,6 +11,7 @@ import { LocalTtsPlayer } from './LocalTtsPlayer';
 import type { LocalSpeechState } from '../lib/localSpeech';
 import { useParagraphBubbles, ParagraphCommentsPanel } from './ParagraphComments';
 import { readingParagraph } from '../lib/readerPosition';
+import { APP_NAME } from '../lib/branding';
 import { updateMediaSessionMetadata, setMediaSessionPlaybackState, updateMediaSessionHandlers, clearMediaSession } from '../lib/mediaSession';
 
 export function Reader({ book, index, prefs, initialProgress, onJump, onBack, onSave, onSync, onRefreshCloud, onReadHistory, historyBusy, cloudRefreshing, canSync, syncStatus, loading, loadError, onRetry, onOfficial, settings, notice }: {
@@ -656,7 +657,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
     <div className="reader-main">
       {showChapters ? <ChapterList chapters={book.chapters} index={index} onJump={jump} onCollapse={collapseChapters} visible={!showSettings && !showComments && !selectedParagraph} /> : <div className="chapter-rail"><button className="chapter-expand" aria-label="展开目录" aria-expanded="false" aria-controls="reader-chapters" onClick={expandChapters}><BookMarked size={17}/><span>目录</span><ChevronRight size={15}/></button></div>}
       <section className={`reading-canvas ${prefs.theme}`} ref={canvas} onScroll={() => { capturePosition(); clearTimeout(saveTimer.current); saveTimer.current = setTimeout(flushPosition, 250); }}>
-        <div className="page-paper" ref={paper} style={{maxWidth:prefs.contentWidth+92}}><div className="page-decoration">TOMATO READER · {book.source === 'official' ? '官方作品' : '本地阅读'}</div><div className="chapter-subtitle">CHAPTER {String(index+1).padStart(2,'0')}</div><h1>{chapter.title}</h1>
+        <div className="page-paper" ref={paper} style={{maxWidth:prefs.contentWidth+92}}><div className="page-decoration">{APP_NAME} · {book.source === 'official' ? '官方作品' : '本地阅读'}</div><div className="chapter-subtitle">CHAPTER {String(index+1).padStart(2,'0')}</div><h1>{chapter.title}</h1>
           {bubblesEnabled && paragraphComments.error && <div className="paragraph-load-note" role="status">段评暂不可用：{paragraphComments.error}<button onClick={paragraphComments.retry}>重试段评计数</button></div>}
           {loading ? <p role="status">正在读取官方正文…</p> : loadError ? <div className="chapter-error" role="alert"><p>{loadError}</p><button onClick={onRetry}>重试正文</button><button onClick={onOfficial}>在官网阅读</button></div> : <ChapterText paragraphs={paragraphs} fontSize={prefs.fontSize} lineHeight={prefs.lineHeight} activeParagraph={currentActiveParagraph} paragraphRefs={paragraphRefs} bubbles={paragraphComments.bubbles} onParagraph={openParagraph} />}
           <div className="end-marker">— 本章完 —</div><div className="pagination"><button disabled={index<=0} onClick={() => jump(index-1)}><ChevronLeft size={19}/> 上一章</button><span>{index+1} / {book.chapters.length}</span><button disabled={index>=book.chapters.length-1} onClick={() => jump(index+1)}>下一章 <ChevronRight size={19}/></button></div>

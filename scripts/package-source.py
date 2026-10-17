@@ -7,7 +7,7 @@ import zipfile
 
 root = Path(__file__).resolve().parent.parent
 version = json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']
-destination = Path(sys.argv[1]) if len(sys.argv) > 1 else root.parent / f'tomato-reader-v{version}-source.zip'
+destination = Path(sys.argv[1]) if len(sys.argv) > 1 else root.parent / f'moyu-reader-v{version}-source.zip'
 excluded = {'node_modules', 'target', 'dist', 'test-output', '.git', '.codex', '.agents', '__pycache__', '.venv'}
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
     for directory, folders, filenames in os.walk(root):
@@ -19,5 +19,5 @@ with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
                 continue
             if path.name.startswith('.env') or path.suffix.lower() in {'.zip', '.log', '.exe', '.pdb', '.dll', '.lib', '.exp', '.obj', '.onnx', '.bin'}:
                 continue
-            archive.write(path, Path(f'tomato-reader-v{version}') / relative)
+            archive.write(path, Path(f'moyu-reader-v{version}') / relative)
 print(destination)

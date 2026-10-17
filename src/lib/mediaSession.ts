@@ -29,9 +29,9 @@ export function updateMediaSessionMetadata(config: MediaMetadataConfig) {
     }
 
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: config.title || 'Tomato Reader',
-      artist: config.artist || 'Tomato Reader',
-      album: config.album || 'Tomato Reader',
+      title: config.title || '墨屿',
+      artist: config.artist || '墨屿',
+      album: config.album || '墨屿',
       artwork,
     });
   } catch {

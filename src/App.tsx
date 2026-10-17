@@ -20,6 +20,8 @@ import { Reader } from './components/Reader';
 import { LeaderboardView } from './components/LeaderboardView';
 import { DiscoveryView } from './components/DiscoveryView';
 import { storage } from './lib/storage';
+import { APP_NAME, APP_TAGLINE } from './lib/branding';
+import { WindowTitlebar } from './components/WindowTitlebar';
 import { cloudTime } from './lib/cloudProgress';
 import type { Book, Preferences, ReadingProgress, Theme } from './types';
 
@@ -614,14 +616,15 @@ export default function App() {
       onDragLeave={e => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
       onDrop={handleDrop}
     >
+      <WindowTitlebar context={screen === 'reader' && activeBook ? activeBook.title : '私人阅读空间'}/>
       {/* Sidebar Navigation */}
       {importBusy && <div className="import-status" role="status">正在导入并保存书籍，请稍候…</div>}
       <aside className="sidebar">
         <button className="brand" onClick={() => navigate('bookshelf')} title="回到书架">
-          <span className="brand-icon">🍅</span>
+          <span className="brand-icon moyu-mark"><BookOpen size={22}/></span>
           <div className="brand-text">
-            <strong>Tomato Reader</strong>
-            <small>DESKTOP NOVEL STUDIO</small>
+            <strong>{APP_NAME}</strong>
+            <small>{APP_TAGLINE}</small>
           </div>
         </button>
 
@@ -710,7 +713,7 @@ export default function App() {
         <div className="side-bottom">
           <span className={`online-dot ${officialUser ? 'green' : 'orange'}`} />
           <span>{account.checking ? '正在检查账号' : account.accountError ? '账号检查失败' : officialUser ? '官方账号在线' : '本地阅读模式'}</span>
-          <small>v0.5.17</small>
+          <small>v{CURRENT_VERSION}</small>
         </div>
       </aside>
 
@@ -784,7 +787,7 @@ export default function App() {
           <div className="settings-screen">
             <div className="topbar">
               <div className="breadcrumbs">设置 <ChevronRight size={15} /> 阅读偏好</div>
-              <span className="version-label">Tomato Reader Pro / v0.5.17</span>
+              <span className="version-label">{APP_NAME} / v{CURRENT_VERSION}</span>
             </div>
             <div className="settings-center">
               <div className="eyebrow">READING PREFERENCES</div>
@@ -796,7 +799,7 @@ export default function App() {
 
               <div className="eyebrow" style={{ marginTop: '28px' }}>SOFTWARE UPDATES</div>
               <h2>软件检查更新</h2>
-              <p className="subheading">检查 Tomato Reader 最新版本与功能升级。</p>
+              <p className="subheading">检查{APP_NAME}最新版本与功能升级。</p>
               <div className="settings-card update-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
                   <div>
@@ -831,7 +834,7 @@ export default function App() {
                         type="button"
                         className="primary-button"
                         onClick={() => {
-                          const url = updateResult.installerUrl || updateResult.downloadUrl || 'https://github.com/tomato-reader/tomato-reader/releases';
+                          const url = updateResult.installerUrl || updateResult.downloadUrl || 'https://github.com/duchen520/Tomato-Reader/releases';
                           window.open(url, '_blank', 'noopener,noreferrer');
                         }}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
@@ -987,7 +990,7 @@ export default function App() {
                           <OfficialCover bookId={book.id} url={book.coverUrl} title={book.title} />
                         ) : (
                           <>
-                            <div className="cover-topline">TOMATO · READER</div>
+                            <div className="cover-topline">{APP_NAME} · 私人书藏</div>
                             <span className="cover-title">{book.title}</span>
                             <span className="cover-bottom">
                               {book.source === 'demo' ? 'SAMPLE FICTION' : 'LOCAL LIBRARY'}
@@ -1082,7 +1085,7 @@ export default function App() {
               {/* Privacy / Beta Info footer */}
               <div className="privacy-strip">
                 <Info size={16} />
-                <span>Tomato Reader Pro 已接入官方正版书库搜索、云端阅读进度双向核对、真人有声剧播放及书评系统。</span>
+                <span>{APP_NAME}已接入官方正版书库搜索、云端阅读进度双向核对、真人有声剧播放及书评系统。</span>
                 <button onClick={openOfficial}>
                   <span>访问番茄官网</span>
                   <ExternalLink size={13} />

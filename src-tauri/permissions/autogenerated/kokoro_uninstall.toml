@@ -2,10 +2,10 @@
 
 [[permission]]
 identifier = "allow-kokoro-uninstall"
-description = "Enables the kokoro_uninstall command."
+description = "Enables the kokoro_uninstall command without any pre-configured scope."
 commands.allow = ["kokoro_uninstall"]
 
 [[permission]]
 identifier = "deny-kokoro-uninstall"
-description = "Denies the kokoro_uninstall command."
+description = "Denies the kokoro_uninstall command without any pre-configured scope."
 commands.deny = ["kokoro_uninstall"]
