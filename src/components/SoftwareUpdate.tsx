@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { createBackup } from '../lib/backups';
 import { checkForUpdate, CURRENT_VERSION } from '../lib/updater';
 import type { UpdateCheckResult } from '../lib/updater';
 
@@ -12,7 +13,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 
 // Kept in App so opening a book or leaving Settings cannot lose an active
 // download, its cancellation signal, or a verified installer ready to retry.
-export function useSoftwareUpdate(notice: (text: string) => void) {
+export function useSoftwareUpdate(notice: (text: string) => void, beforeInstall?: () => void) {
+  const installGuard = useRef(beforeInstall); installGuard.current = beforeInstall;
   const [result, setResult] = useState<UpdateCheckResult | null>(null);
   const [checking, setChecking] = useState(false);
   const [download, setDownload] = useState<DownloadState>(empty);
@@ -34,6 +36,8 @@ export function useSoftwareUpdate(notice: (text: string) => void) {
       // Reader writes its pending chapter/paragraph position synchronously on
       // pagehide. Flush it even if Settings was left while downloading.
       window.dispatchEvent(new Event('pagehide'));
+      installGuard.current?.();
+      await createBackup('before-update');
       await invoke('update_install');
     } catch (error) {
       busy.current = false;

@@ -2,6 +2,9 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "backup_create",
+            "backup_list",
+            "backup_load",
             "update_download",
             "update_cancel",
             "update_install",

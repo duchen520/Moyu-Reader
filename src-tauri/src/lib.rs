@@ -1,3 +1,4 @@
+mod backups;
 mod auto_update;
 mod cover_cache;
 mod local_tts;
@@ -20,6 +21,22 @@ mod desktop {
         } else {
             Err("远程窗口不能访问本地账号服务".into())
         }
+    }
+
+    #[tauri::command]
+    async fn backup_create(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::backups::Backups>>, payload: String, kind: String) -> Result<Value, String> {
+        local_only(&window)?; let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.create(&payload, &kind)).await.map_err(|_| "备份保存任务失败")?
+    }
+    #[tauri::command]
+    async fn backup_list(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::backups::Backups>>) -> Result<Value, String> {
+        local_only(&window)?; let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.list()).await.map_err(|_| "备份列表读取任务失败")?
+    }
+    #[tauri::command]
+    async fn backup_load(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::backups::Backups>>, id: String) -> Result<String, String> {
+        local_only(&window)?; let service = service.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || service.load(&id)).await.map_err(|_| "备份读取任务失败")?
     }
 
     #[tauri::command]
@@ -349,6 +366,8 @@ mod desktop {
                     std::path::PathBuf::from(profile).join("tomato-cover-cache")
                 } else { app.path().app_cache_dir()?.join("covers") };
                 app.manage(crate::cover_cache::CoverCache::new(root));
+                let backups = if let Some(profile) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") { std::path::PathBuf::from(profile).join("moyu-backups") } else { app.path().app_local_data_dir()?.join("backups") };
+                app.manage(std::sync::Arc::new(crate::backups::Backups::new(backups)));
                 let updates = if let Some(profile) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") { std::path::PathBuf::from(profile).join("moyu-updates") } else { app.path().app_cache_dir()?.join("updates") };
                 app.manage(std::sync::Arc::new(crate::auto_update::UpdateService::new(updates)));
                 let data = if let Some(profile)=std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
@@ -359,6 +378,9 @@ mod desktop {
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
+                backup_create,
+                backup_list,
+                backup_load,
                 update_download,
                 update_cancel,
                 update_install,

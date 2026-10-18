@@ -59,7 +59,11 @@ async function scrollChapter(page, index, offset = 160) {
     canvas.scrollTop += section.getBoundingClientRect().top - canvas.getBoundingClientRect().top + offset;
   }, offset);
   await page.waitForTimeout(120);
-  await page.waitForFunction(index => Number(document.querySelector('.chapter-item.current .chapter-index')?.textContent) === index + 1, index);
+  try { await page.waitForFunction(index => Number(document.querySelector('.chapter-item.current .chapter-index')?.textContent) === index + 1, index, { timeout: 5000 }); }
+  catch (error) {
+    console.log('Chapter movement diagnostic', await page.evaluate(expected => ({ expected, current: document.querySelector('.chapter-item.current')?.textContent, scroll: document.querySelector('.reading-canvas')?.scrollTop, sections: [...document.querySelectorAll('.continuous-chapter')].map(el => ({ index: el.dataset.chapterIndex, top: el.getBoundingClientRect().top, height: el.offsetHeight })), requests: window.__requests?.slice(-12) }), index));
+    throw error;
+  }
 }
 try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${port}`)).ok) break; } catch {} await delay(100); }
@@ -171,6 +175,22 @@ try {
   await o.waitForTimeout(350);
   assert.equal(await o.evaluate(() => JSON.parse(localStorage.getItem('tomato-reader-v01:progress'))['continuous-test'].chapterIndex), 148);
   check('Failed prefetch exposes a retry; recovering it does not advance reading progress until actually scrolled into');
+  for (let i = 149; i <= 180; i++) {
+    await o.locator(`[data-chapter-index="${i}"] .story-content`).waitFor();
+    await scrollChapter(o, i, 200);
+  }
+  await o.getByRole('button', { name: '返回书架', exact: true }).click();
+  await o.getByRole('button', { name: '阅读 连续阅读测试', exact: true }).click();
+  await o.locator('.continuous-stream').waitFor();
+  const cached = await o.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('tomato-reader-library', 1);
+    request.onsuccess = () => { const db = request.result, tx = db.transaction('books'); const result = tx.objectStore('books').getAll(); tx.oncomplete = () => { db.close(); resolve(result.result.flatMap(b => b.source === 'official' ? b.chapters : []).filter(c => c.content).length); }; tx.onabort = reject; };
+  }));
+  assert.ok(cached <= 24, String(cached));
+  await o.locator('.chapter-item').nth(147).click();
+  await o.locator('[data-chapter-index="147"] .story-content').waitFor();
+  assert.ok(await o.evaluate(() => window.__requests.filter(id => id === 'continuous-147').length >= 2));
+  check('Long continuous reading retains at most 24 cached official bodies and re-fetches an evicted chapter without losing its directory position');
   await mkdir('test-output', { recursive: true });
   await o.screenshot({ path: 'test-output/continuous-reading.png' });
   assert.deepEqual(errors, []);

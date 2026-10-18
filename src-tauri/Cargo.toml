@@ -1,6 +1,6 @@
 [package]
 name = "tomato-reader"
-version = "0.5.20"
+version = "0.5.21"
 description = "Independent Windows reading client prototype"
 authors = ["Tomato Reader Contributors"]
 edition = "2021"

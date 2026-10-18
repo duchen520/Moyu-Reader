@@ -27,6 +27,8 @@ async function fixture(options = {}) {
         window.__calls.push(command);
         if (command === 'official_account') return null;
         if (command === 'official_cancel_login') return;
+        if (command === 'backup_list') return { path: 'test backups', backups: [] };
+        if (command === 'backup_create') { if (window.__backupFail) throw Error('测试备份磁盘无法写入'); return { id: 'test-backup', createdAt: Date.now(), books: JSON.parse(args.payload).books.length, valid: true }; }
         if (command === 'update_download') return new Promise((resolve, reject) => { window.__downloads.push({ resolve, reject, emit: value => args.progress.onmessage(value) }); });
         if (command === 'update_cancel') { window.__downloads.at(-1)?.reject('更新下载已取消'); return; }
         if (command === 'update_install') { if (window.__installFail) throw Error('无法启动安装程序；应用尚未退出'); return; }
@@ -115,6 +117,18 @@ try {
   assert.equal(await calls(offline, 'update_download'), 0);
   await offline.close();
   check('Unavailable release metadata reports an error instead of claiming the app is current');
+  const protectedUpdate = await fixture();
+  await protectedUpdate.getByRole('button', { name: '立即更新', exact: true }).click();
+  await protectedUpdate.waitForFunction(() => window.__downloads.length === 1);
+  await protectedUpdate.evaluate(() => { window.__backupFail = true; window.__downloads[0].resolve({ version: '99.0.0', total: 1000 }); });
+  await protectedUpdate.getByRole('button', { name: '重试安装并重启', exact: true }).waitFor();
+  assert.equal(await calls(protectedUpdate, 'update_install'), 0);
+  await protectedUpdate.evaluate(() => { window.__backupFail = false; });
+  await protectedUpdate.getByRole('button', { name: '重试安装并重启', exact: true }).click();
+  await protectedUpdate.waitForFunction(() => window.__calls.includes('update_install'));
+  assert.equal(await calls(protectedUpdate, 'update_install'), 1);
+  check('A failed pre-update backup blocks installation and allows retry after backup storage recovers');
+  await protectedUpdate.close();
   assert.deepEqual(errors, []);
   console.log(`${passed} app update checks passed using mocked release and native responses; no installer executed.`);
 } finally { await browser?.close(); server.kill(); }
