@@ -60,7 +60,7 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     official.audioCatalog(bookId).then(data => {
       if (cancelled) return;
       setCatalog(data); const restored = data.albums.some(a => a.id === saved.current?.albumId) ? saved.current!.albumId : data.albums[0]?.id ?? '';
-      setAlbumId(restored); setStatus(data.albums.length ? '官方有声版已找到，请选择集数试播' : '官方本次未返回有声版，仍可使用电脑朗读');
+      setAlbumId(restored); setStatus(data.albums.length ? '官方有声版已找到，请选择集数试播' : data.ttsTones.length ? '官方本次未提供真人有声版，可切换到「番茄AI音色」朗读。' : '官方本次未提供真人有声版，可使用电脑或离线朗读。');
     }).catch(e => { if (!cancelled) { setError(errorMessage(e)); setStatus('官方有声版读取失败'); } }).finally(() => { if (!cancelled) setChecking(false); });
     return () => { cancelled = true; };
   }, [bookId, retry]);

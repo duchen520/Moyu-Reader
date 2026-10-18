@@ -926,18 +926,7 @@ impl OfficialService {
         let s = self.read_session().await;
         let j=request(&s,Method::GET,&format!("/reading/bookapi/audio/toneinfo/?aid=1967&app_name=novelapp&version_code=57700&update_version_code=57700&device_platform=web&iid=0&book_id={book_id}"),None).await?;
         business(&j)?;
-        let d = &j["data"];
-        let audio = d["audio_tones"]
-            .as_array()
-            .ok_or("官方音色目录格式已变化")?;
-        let infos = d["book_infos"].as_array();
-        let albums=audio.iter().filter_map(|a|{
-            let id=sid(&a["abook_id"]);if check_id(&id).is_err(){return None;}
-            let info=infos.and_then(|b|b.iter().find(|b|sid(&b["book_id"])==id));
-            Some(json!({"id":id,"name":info.and_then(|b|b["book_name"].as_str()).unwrap_or("官方有声版"),"narrator":a["title"].as_str().unwrap_or("官方有声版"),"kind":"recorded"}))
-        }).collect::<Vec<_>>();
-        let tones=d["tts_tones"].as_array().map(|a|a.iter().map(|t|json!({"id":sid(&t["id"]),"name":t["title"].as_str().unwrap_or("官方AI声音")})).collect::<Vec<_>>()).unwrap_or_default();
-        Ok(json!({"albums":albums,"ttsTones":tones}))
+        normalize_audio_catalog(&j)
     }
     pub async fn audio_episodes(&self, album_id: &str) -> Result<Value, String> {
         check_id(album_id)?;
@@ -986,9 +975,66 @@ impl OfficialService {
     }
 }
 
+fn normalize_audio_catalog(j: &Value) -> Result<Value, String> {
+    business(j)?;
+    let d = j["data"].as_object().ok_or("官方音色目录缺少数据")?;
+    if !d.contains_key("audio_tones") && !d.contains_key("tts_tones") {
+        return Err("官方音色目录缺少真人及AI列表，请稍后重试".into());
+    }
+    // A null/missing list means that kind is unavailable, independently of the other kind.
+    fn list<'a>(d: &'a serde_json::Map<String, Value>, key: &str) -> Result<&'a [Value], String> {
+        match d.get(key) {
+            None | Some(Value::Null) => Ok(&[]),
+            Some(Value::Array(rows)) => Ok(rows),
+            _ => Err(format!("官方音色目录字段 {key} 格式已变化")),
+        }
+    }
+    let audio = list(d, "audio_tones")?;
+    let tts = list(d, "tts_tones")?;
+    let infos = d.get("book_infos").and_then(Value::as_array);
+    let albums = audio.iter().filter_map(|a| {
+        let id = sid(&a["abook_id"]);
+        if check_id(&id).is_err() { return None; }
+        let info = infos.and_then(|rows| rows.iter().find(|b| sid(&b["book_id"]) == id));
+        Some(json!({"id":id,"name":info.and_then(|b| b["book_name"].as_str()).unwrap_or("官方有声版"),"narrator":a["title"].as_str().unwrap_or("官方有声版"),"kind":"recorded"}))
+    }).collect::<Vec<_>>();
+    let tones = tts.iter().filter_map(|t| {
+        let id = sid(&t["id"]);
+        if id.is_empty() || id.len() > 10 || !id.bytes().all(|b| b.is_ascii_digit()) { return None; }
+        Some(json!({"id":id,"name":t["title"].as_str().unwrap_or("官方AI声音")}))
+    }).collect::<Vec<_>>();
+    Ok(json!({"albums":albums,"ttsTones":tones}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_catalog_keeps_ai_when_recorded_list_is_null() {
+        let value = json!({"code":0,"data":{"audio_tones":null,"tts_tones":[{"id":74,"title":"成熟大叔音升级版"},{"id":"1","title":"甜美少女音"}]}});
+        let catalog = normalize_audio_catalog(&value).unwrap();
+        assert_eq!(catalog["albums"], json!([]));
+        assert_eq!(catalog["ttsTones"][0]["id"], "74");
+        assert_eq!(catalog["ttsTones"].as_array().unwrap().len(), 2);
+        let mut absent = value.clone();
+        absent["data"].as_object_mut().unwrap().remove("audio_tones");
+        assert_eq!(normalize_audio_catalog(&absent).unwrap(), catalog);
+    }
+    #[test]
+    fn audio_catalog_supports_recorded_only_and_explicit_empty_lists() {
+        let catalog = normalize_audio_catalog(&json!({"code":0,"data":{"audio_tones":[{"abook_id":"7325015266541423678","title":"主播"}],"tts_tones":null,"book_infos":[{"book_id":"7325015266541423678","book_name":"真人作品"}]}})).unwrap();
+        assert_eq!(catalog["albums"][0]["name"], "真人作品");
+        assert_eq!(catalog["ttsTones"], json!([]));
+        for lists in [json!({"audio_tones":null,"tts_tones":null}), json!({"audio_tones":[],"tts_tones":[]})] {
+            assert_eq!(normalize_audio_catalog(&json!({"code":0,"data":lists})).unwrap(), json!({"albums":[],"ttsTones":[]}));
+        }
+    }
+    #[test]
+    fn audio_catalog_still_rejects_unknown_shapes_and_failed_requests() {
+        for value in [json!({"code":0,"data":{}}), json!({"code":0,"data":null}), json!({"code":0,"data":{"audio_tones":{},"tts_tones":[]}}), json!({"code":0,"data":{"tts_tones":"changed"}}), json!({"code":1,"data":{"audio_tones":null,"tts_tones":[]}})] {
+            assert!(normalize_audio_catalog(&value).is_err());
+        }
+    }
     #[tokio::test]
     async fn slow_read_does_not_hold_account_state_and_logout_isolates_cookies() {
         use std::{io::{Read, Write}, net::TcpListener};

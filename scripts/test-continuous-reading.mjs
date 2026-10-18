@@ -177,6 +177,11 @@ try {
   check('Failed prefetch exposes a retry; recovering it does not advance reading progress until actually scrolled into');
   for (let i = 149; i <= 180; i++) {
     await o.locator(`[data-chapter-index="${i}"] .story-content`).waitFor();
+    // This walk measures cache retention, rather than racing successive scroll
+    // assignments against pending neighbour loads and their layout anchoring.
+    // Async preceding-text anchoring is exercised explicitly above.
+    await o.waitForFunction(() => [...document.querySelectorAll('.continuous-chapter')].every(el => el.querySelector('.story-content')));
+    await o.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await scrollChapter(o, i, 200);
   }
   await o.getByRole('button', { name: '返回书架', exact: true }).click();
