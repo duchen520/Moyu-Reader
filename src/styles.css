@@ -3989,3 +3989,10 @@ input:not([type=range]):not([type=file]), select, textarea { color: var(--text-m
   border-color: var(--text-muted, #64748b);
 }
 
+
+/* Chapter sections are anchored explicitly when the bounded window moves. */
+.reading-canvas:has(.continuous-stream) { overflow-anchor: none; }
+.continuous-chapter { display: flow-root; padding-top: 18px; }
+.continuous-chapter + .continuous-chapter { border-top: 1px solid var(--border-light); margin-top: 36px; padding-top: 48px; }
+.continuous-placeholder { min-height: 65vh; color: var(--text-muted); }
+.control-block select { width: 100%; padding: 10px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-card); color: var(--text-main); }

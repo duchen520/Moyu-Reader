@@ -29,6 +29,7 @@ export interface ReadingProgress {
 export type Theme = 'paper' | 'sepia' | 'night';
 
 export interface Preferences {
+  readingMode?: 'normal' | 'continuous';
   autoUploadProgress?: boolean;
   showParagraphComments?: boolean;
   theme: Theme;

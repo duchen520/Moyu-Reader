@@ -11,11 +11,13 @@ import { LocalTtsPlayer } from './LocalTtsPlayer';
 import type { LocalSpeechState } from '../lib/localSpeech';
 import { useParagraphBubbles, ParagraphCommentsPanel } from './ParagraphComments';
 import { readingParagraph } from '../lib/readerPosition';
+import { useContinuousReading } from './useContinuousReading';
 import { APP_NAME } from '../lib/branding';
 import { updateMediaSessionMetadata, setMediaSessionPlaybackState, updateMediaSessionHandlers, clearMediaSession } from '../lib/mediaSession';
 
-export function Reader({ book, index, prefs, initialProgress, onJump, onBack, onSave, onSync, onRefreshCloud, onReadHistory, historyBusy, cloudRefreshing, canSync, syncStatus, loading, loadError, onRetry, onOfficial, settings, notice }: {
+export function Reader({ book, index, prefs, initialProgress, onJump, onVisible, loadChapter, onBack, onSave, onSync, onRefreshCloud, onReadHistory, historyBusy, cloudRefreshing, canSync, syncStatus, loading, loadError, onRetry, onOfficial, settings, notice }: {
   book: Book; index: number; prefs: Preferences; initialProgress?: ReadingProgress;
+  onVisible: (index: number) => void; loadChapter: (index: number) => Promise<void>;
   onJump: (index: number) => void; onBack: () => void;
   onSave: (chapterIndex: number, scrollRatio: number, paragraphIndex: number) => void;
   onSync: () => void; onRefreshCloud: () => void; cloudRefreshing: boolean; canSync: boolean; syncStatus: string; loading: boolean; loadError: string; onRetry: () => void; onOfficial: () => void;
@@ -76,6 +78,9 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   const continueSpeech = useRef(false);
   const latest = useRef({ onSave, onJump, onBack, notice, index, book, speech, loading, loadError });
   latest.current = { onSave, onJump, onBack, notice, index, book, speech, loading, loadError };
+  const lastPosition = useRef(initialProgress);
+  const continuous = useContinuousReading({ enabled: prefs.readingMode === 'continuous', book, index, prefs, canvas, initialProgress: lastPosition.current, onVisible, loadChapter });
+  const continuousRef = useRef(continuous); continuousRef.current = continuous;
   const restoration = useRef(initialProgress);
   const restoredChapter = useRef('');
   const supportsSpeech = typeof window.speechSynthesis !== 'undefined';
@@ -88,12 +93,21 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   const capturePosition = () => {
     const el = canvas.current;
     const current = latest.current;
+    if (continuousRef.current.enabled) {
+      const position = continuousRef.current.position();
+      if (position) {
+        pendingPosition.current = { save: current.onSave, ...position };
+        lastPosition.current = { chapterIndex: position.index, scrollRatio: position.ratio, paragraphIndex: position.paragraph, updatedAt: Date.now() };
+      }
+      return;
+    }
     const content = current.book.chapters[current.index];
     if (!el || current.loading || current.loadError || !content?.content || restoredChapter.current !== `${current.book.id}:${content.id}`) return;
     const ratio = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
     const viewportTop = el.getBoundingClientRect().top;
     const visible = readingParagraph(paragraphRefs.current, viewportTop);
     pendingPosition.current = { save: current.onSave, index: current.index, ratio: Math.min(1, Math.max(0, ratio)), paragraph: Math.max(0, visible) };
+    lastPosition.current = { chapterIndex: current.index, scrollRatio: ratio, paragraphIndex: Math.max(0, visible), updatedAt: Date.now() };
   };
   const savePosition = () => { capturePosition(); flushPosition(); };
   useLayoutEffect(() => () => {
@@ -138,8 +152,9 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
     // Text change is the only event that resets playback. Scroll and settings don't reset it.
   }, [book.id, chapter.id, chapter.content]);
   useEffect(() => { engine.current?.configure(rate, voiceURI); }, [rate, voiceURI]);
+  useLayoutEffect(() => { restoredChapter.current = ''; restoration.current = lastPosition.current; }, [prefs.readingMode]);
   useLayoutEffect(() => {
-    if (loading || !chapter.content || !canvas.current) return;
+    if (prefs.readingMode === 'continuous' || loading || !chapter.content || !canvas.current) return;
     const key = `${book.id}:${chapter.id}`;
     if (restoredChapter.current === key) return;
     restoredChapter.current = key;
@@ -148,7 +163,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
     const ratio = saved?.chapterIndex === index ? saved.scrollRatio ?? 0 : 0;
     el.scrollTop = ratio * Math.max(0, el.scrollHeight - el.clientHeight);
     restoration.current = undefined;
-  }, [book.id, chapter.id, chapter.content, loading]);
+  }, [book.id, chapter.id, chapter.content, loading, prefs.readingMode]);
   useEffect(() => {
     if (currentActiveParagraph >= 0) {
       paragraphRefs.current[currentActiveParagraph]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -229,6 +244,7 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
             : fits ? Math.max(3000, Math.min(120000, chapter.content.length / 8 * 1000)) : 1500;
           if (edgeTime < hold) { frame = requestAnimationFrame(tick); return; }
           accumulated = 0;
+          if (continuousRef.current.enabled && index + 1 < book.chapters.length) { frame = requestAnimationFrame(tick); return; }
           if (index + 1 < book.chapters.length) onJump(index + 1);
           else { setAuto('off'); notice('已阅读至全书末尾。'); }
           return;
@@ -285,8 +301,10 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
   const collapseChapters = useCallback(() => setShowChapters(false), []);
   const expandChapters = useCallback(() => { setShowChapters(true); setShowSettings(false); setShowComments(false); setSelectedParagraph(null); }, []);
   const jump = useCallback((i: number) => {
-    if (i < 0 || i >= latest.current.book.chapters.length || i === latest.current.index) return;
-    savePosition(); stop(); latest.current.onJump(i);
+    if (i < 0 || i >= latest.current.book.chapters.length) return;
+    savePosition(); stop();
+    if (continuousRef.current.enabled) continuousRef.current.jump(i);
+    latest.current.onJump(i);
   }, []);
 
   useEffect(() => {
@@ -656,11 +674,22 @@ export function Reader({ book, index, prefs, initialProgress, onJump, onBack, on
     {book.source === 'official' && <div className={`sync-bar ${prefs.autoUploadProgress ? 'upload-enabled' : 'upload-disabled'}`}><span><strong className="upload-state">{prefs.autoUploadProgress ? '自动上传已开启' : '自动上传已关闭'}</strong> · 最近结果：{syncStatus || '尚未读取云端记录'}</span><button onClick={onRefreshCloud} disabled={cloudRefreshing}>{cloudRefreshing ? '正在读取…' : '读取云端进度'}</button><button onClick={onReadHistory} disabled={historyBusy}>{historyBusy ? '正在读取历史…' : '查看已读章节'}</button><button onClick={onSync} disabled={loading || !chapter.content || !canSync}>上传本章进度</button><button onClick={onOfficial}>在官网打开本章</button></div>}
     <div className="reader-main">
       {showChapters ? <ChapterList chapters={book.chapters} index={index} onJump={jump} onCollapse={collapseChapters} visible={!showSettings && !showComments && !selectedParagraph} /> : <div className="chapter-rail"><button className="chapter-expand" aria-label="展开目录" aria-expanded="false" aria-controls="reader-chapters" onClick={expandChapters}><BookMarked size={17}/><span>目录</span><ChevronRight size={15}/></button></div>}
-      <section className={`reading-canvas ${prefs.theme}`} ref={canvas} onScroll={() => { capturePosition(); clearTimeout(saveTimer.current); saveTimer.current = setTimeout(flushPosition, 250); }}>
-        <div className="page-paper" ref={paper} style={{maxWidth:prefs.contentWidth+92}}><div className="page-decoration">{APP_NAME} · {book.source === 'official' ? '官方作品' : '本地阅读'}</div><div className="chapter-subtitle">CHAPTER {String(index+1).padStart(2,'0')}</div><h1>{chapter.title}</h1>
+      <section className={`reading-canvas ${prefs.theme}`} ref={canvas} onScroll={() => { continuous.onScroll(); capturePosition(); clearTimeout(saveTimer.current); saveTimer.current = setTimeout(flushPosition, 250); }}>
+        <div className="page-paper" ref={paper} style={{maxWidth:prefs.contentWidth+92}}><div className="page-decoration">{APP_NAME} · {book.source === 'official' ? '官方作品' : '本地阅读'}</div>{continuous.enabled ? <div className="continuous-stream" data-reading-mode="continuous">
+          {continuous.indices.map(i => {
+            const item = book.chapters[i], active = i === index;
+            const error = continuous.errors[i] || (active ? loadError : '');
+            return <section className="continuous-chapter" data-chapter-index={i} key={item.id} ref={el => { if (el) continuous.sections.current.set(i, el); else continuous.sections.current.delete(i); }}>
+              <div className="chapter-subtitle">CHAPTER {String(i + 1).padStart(2, '0')} · {i + 1} / {book.chapters.length}</div><h1>{item.title}</h1>
+              {item.content ? <ChapterText paragraphs={active ? paragraphs : item.content.split(/\n\s*\n|\n/).map(s => s.trim()).filter(Boolean)} fontSize={prefs.fontSize} lineHeight={prefs.lineHeight} activeParagraph={active ? currentActiveParagraph : -1} paragraphRefs={active ? paragraphRefs : undefined} bubbles={active ? paragraphComments.bubbles : {}} onParagraph={openParagraph} />
+                : <div className="continuous-placeholder" aria-busy={!error}>{error ? <div role="alert"><p>{error}</p><button onClick={() => { continuous.retry(i); if (active) onRetry(); }}>重试第 {i + 1} 章</button></div> : <p role="status">正在读取第 {i + 1} 章…</p>}</div>}
+              <div className="end-marker">{i === book.chapters.length - 1 ? '— 全书完 —' : '— 本章完 · 向下继续阅读 —'}</div>
+            </section>;
+          })}
+        </div> : <><div className="chapter-subtitle">CHAPTER {String(index+1).padStart(2,'0')}</div><h1>{chapter.title}</h1>
           {bubblesEnabled && paragraphComments.error && <div className="paragraph-load-note" role="status">段评暂不可用：{paragraphComments.error}<button onClick={paragraphComments.retry}>重试段评计数</button></div>}
           {loading ? <p role="status">正在读取官方正文…</p> : loadError ? <div className="chapter-error" role="alert"><p>{loadError}</p><button onClick={onRetry}>重试正文</button><button onClick={onOfficial}>在官网阅读</button></div> : <ChapterText paragraphs={paragraphs} fontSize={prefs.fontSize} lineHeight={prefs.lineHeight} activeParagraph={currentActiveParagraph} paragraphRefs={paragraphRefs} bubbles={paragraphComments.bubbles} onParagraph={openParagraph} />}
-          <div className="end-marker">— 本章完 —</div><div className="pagination"><button disabled={index<=0} onClick={() => jump(index-1)}><ChevronLeft size={19}/> 上一章</button><span>{index+1} / {book.chapters.length}</span><button disabled={index>=book.chapters.length-1} onClick={() => jump(index+1)}>下一章 <ChevronRight size={19}/></button></div>
+          <div className="end-marker">— 本章完 —</div><div className="pagination"><button disabled={index<=0} onClick={() => jump(index-1)}><ChevronLeft size={19}/> 上一章</button><span>{index+1} / {book.chapters.length}</span><button disabled={index>=book.chapters.length-1} onClick={() => jump(index+1)}>下一章 <ChevronRight size={19}/></button></div></>}
         </div>
       </section>
       {showSettings && <aside className="reader-settings" aria-label="阅读偏好面板"><div className="settings-panel-top"><strong>阅读偏好</strong><button className="icon-button" aria-label="关闭阅读偏好" onClick={() => setShowSettings(false)}><X size={17}/></button></div>{settings}<div className="small-note">设置和章内位置保存在当前电脑。方向键、空格翻页，Ctrl + 方向键切章。</div></aside>}
@@ -708,10 +737,10 @@ const ChapterList = memo(function ChapterList({ chapters, index, onJump, onColla
 
 const ChapterText = memo(function ChapterText({ paragraphs, fontSize, lineHeight, activeParagraph, paragraphRefs, bubbles, onParagraph }: {
   paragraphs: string[]; fontSize: number; lineHeight: number; activeParagraph: number;
-  paragraphRefs: RefObject<(HTMLParagraphElement | null)[]>;
+  paragraphRefs?: RefObject<(HTMLParagraphElement | null)[]>;
   bubbles: Record<number, { id: number; count: number }>;
   onParagraph: (id: number, index: number) => void;
 }) {
   return <div className="story-content" style={{ fontSize, lineHeight }}>{paragraphs.map((paragraph, i) =>
-    <p key={i} ref={node => { paragraphRefs.current[i] = node; }} className={activeParagraph === i ? 'spoken-paragraph' : ''}>{paragraph}{bubbles[i] && <button className="paragraph-bubble" data-paragraph-id={bubbles[i].id} aria-label={`查看第${i+1}段评论，共${bubbles[i].count}条`} onClick={() => onParagraph(bubbles[i].id, i)}><MessageSquare size={13} /><span>{bubbles[i].count > 999 ? '999+' : bubbles[i].count}</span></button>}</p>)}</div>;
+    <p key={i} ref={node => { if (paragraphRefs) paragraphRefs.current[i] = node; }} className={activeParagraph === i ? 'spoken-paragraph' : ''}>{paragraph}{bubbles[i] && <button className="paragraph-bubble" data-paragraph-id={bubbles[i].id} aria-label={`查看第${i+1}段评论，共${bubbles[i].count}条`} onClick={() => onParagraph(bubbles[i].id, i)}><MessageSquare size={13} /><span>{bubbles[i].count > 999 ? '999+' : bubbles[i].count}</span></button>}</p>)}</div>;
 });

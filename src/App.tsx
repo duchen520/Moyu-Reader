@@ -5,7 +5,6 @@ import {
   Cloud, CloudOff, Compass, ExternalLink, FilePlus, Filter, Flame, FolderOpen, Info,
   Library, Minus, Moon, Plus, RefreshCw, Search, Settings2, Sparkles, Sun, Trash2, Trophy, UploadCloud, UserRound, X,
 } from 'lucide-react';
-import { demoBooks } from './data/demo';
 import { importBook } from './lib/importBook';
 import { checkForUpdate, CURRENT_VERSION } from './lib/updater';
 import type { UpdateCheckResult } from './lib/updater';
@@ -28,7 +27,7 @@ import type { Book, Preferences, ReadingProgress, Theme } from './types';
 type Screen = 'rankings' | 'discovery' | 'bookshelf' | 'reader' | 'settings' | 'official' | 'cloud-shelf' | 'opening';
 
 function loadBooks(): Book[] {
-  return [...demoBooks, ...storage.books()];
+  return storage.books().filter(book => book.source !== 'demo');
 }
 
 function timeLabel(timestamp: number): string {
@@ -122,7 +121,7 @@ export default function App() {
     if (!matchesQuery) return false;
     if (shelfFilter === 'recent') return !!progress[book.id];
     if (shelfFilter === 'official') return book.source === 'official';
-    if (shelfFilter === 'local') return book.source === 'local' || book.source === 'demo';
+    if (shelfFilter === 'local') return book.source === 'local';
     return true;
   }), [books, query, shelfFilter, progress]);
 
@@ -357,17 +356,44 @@ export default function App() {
     if (activeBook.source !== 'official') saveReading(activeBook.id, index);
   }, [activeBook, saveReading]);
 
+  const chapterRequests = useRef(new Map<string, Promise<void>>());
+  const chapterSlots = useRef({ active: 0, waiting: [] as (() => void)[] });
+  const chapterContext = useRef({ screen, bookId: activeBook?.id, index: readerChapter });
+  chapterContext.current = { screen, bookId: activeBook?.id, index: readerChapter };
+  const loadChapterAt = useCallback((book: Book, index: number): Promise<void> => {
+    const target = book.chapters[index];
+    if (!target || book.source !== 'official' || target.loaded) return Promise.resolve();
+    const key = `${book.id}:${target.id}`;
+    const previous = chapterRequests.current.get(key);
+    if (previous) return previous;
+    const request = (async () => {
+      await new Promise<void>(resolve => {
+        if (chapterSlots.current.active < 2) { chapterSlots.current.active++; resolve(); }
+        else chapterSlots.current.waiting.push(resolve);
+      });
+      try {
+      const current = chapterContext.current;
+      if (current.screen !== 'reader' || current.bookId !== book.id || Math.abs(current.index - index) > 2) return;
+      const raw = await official.chapter(target.id);
+      if (raw.id !== target.id) throw new Error('官方返回章节与请求不匹配，请重试。');
+      const loaded = plainChapter(raw);
+      if (!loaded.content) throw new Error('官方正文没有可阅读的文字。');
+      setBooks(old => old.map(b => b.id === book.id ? { ...b, chapters: b.chapters.map(c => c.id === target.id ? { ...c, ...loaded, title: loaded.title || c.title } : c) } : b));
+      } finally {
+        const next = chapterSlots.current.waiting.shift();
+        if (next) next(); else chapterSlots.current.active--;
+      }
+    })().finally(() => { chapterRequests.current.delete(key); });
+    chapterRequests.current.set(key, request);
+    return request;
+  }, []);
+
   useEffect(() => {
     if (screen !== 'reader' || !activeBook || !chapter) { setChapterLoading(false); return; }
     if (activeBook.source !== 'official' || chapter.loaded) { setChapterLoading(false); setChapterError(''); return; }
     let cancelled = false;
     setChapterLoading(true); setChapterError('');
-    official.chapter(chapter.id).then(raw => {
-      if (cancelled) return;
-      const loaded = plainChapter(raw);
-      if (!loaded.content) throw new Error('官方正文没有可朗读的文字。');
-      setBooks(old => old.map(b => b.id === activeBook.id ? { ...b, chapters: b.chapters.map(c => c.id === loaded.id ? { ...c, ...loaded, title: loaded.title || c.title } : c) } : b));
-    }).catch(e => { if (!cancelled) { setChapterError(errorMessage(e)); setSyncStatus('正文读取失败，本章未上传阅读进度'); } })
+    loadChapterAt(activeBook, readerChapter).catch(e => { if (!cancelled) { setChapterError(errorMessage(e)); setSyncStatus('正文读取失败，本章未上传阅读进度'); } })
       .finally(() => { if (!cancelled) setChapterLoading(false); });
     return () => { cancelled = true; };
   }, [screen, activeBook?.id, chapter?.id, chapter?.loaded, retryChapter]);
@@ -733,6 +759,8 @@ export default function App() {
             prefs={prefs}
             initialProgress={readerEntryProgress.current}
             onJump={jumpChapter}
+            onVisible={i => { setReaderChapter(i); setChapterError(''); }}
+            loadChapter={i => loadChapterAt(activeBook, i)}
             onBack={() => navigate('bookshelf')}
             onSave={(i, ratio, paragraph) => saveReading(activeBook.id, i, ratio, paragraph)}
             onSync={() => void prepareUpload()}
@@ -916,8 +944,8 @@ export default function App() {
                       : '从排行榜或书库发现好书，或者直接打开已收藏的作品开始阅读。'}
                   </p>
                   <div className="hero-btn-row">
-                    <button className="hero-read-btn" onClick={() => openBook(lastRead ?? books[0])}>
-                      <span>开始阅读</span>
+                    <button className="hero-read-btn" onClick={() => { const book = lastRead ?? books[0]; if (book) openBook(book); else navigate('discovery'); }}>
+                      <span>{books.length ? '开始阅读' : '去找一本书'}</span>
                       <ArrowRight size={16} />
                     </button>
                     <button className="hero-explore-btn" onClick={() => navigate('rankings')}>
@@ -966,7 +994,7 @@ export default function App() {
                     className={`shelf-tab ${shelfFilter === 'local' ? 'active' : ''}`}
                     onClick={() => setShelfFilter('local')}
                   >
-                    本地/示例 ({books.filter(b => b.source === 'local' || b.source === 'demo').length})
+                    本地书籍 ({books.filter(b => b.source === 'local').length})
                   </button>
                 </div>
               </div>
@@ -1198,6 +1226,14 @@ function PreferenceControls({ prefs, setPreference }: { prefs: Preferences, setP
   ];
   return (
     <div className="preference-controls">
+      <div className="control-block">
+        <label htmlFor="reading-mode">阅读模式</label>
+        <select id="reading-mode" value={prefs.readingMode ?? 'normal'} onChange={event => setPreference({ readingMode: event.target.value as 'normal' | 'continuous' })}>
+          <option value="normal">普通模式 · 按章节阅读</option>
+          <option value="continuous">连续阅读 · 上下滚动跨章节</option>
+        </select>
+        <p>默认普通模式。连续阅读可直接滚入前后章，提前读取附近 1–2 章；目录与进度跟随实际阅读位置，预加载不会上传进度。</p>
+      </div>
       <div className="control-block upload-preference">
         <label htmlFor="auto-upload-progress">云端自动上传阅读进度</label>
         <button id="auto-upload-progress" className="preference-switch" type="button" role="switch" aria-checked={!!prefs.autoUploadProgress}

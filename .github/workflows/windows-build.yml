@@ -30,6 +30,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --locked
       - run: npx playwright install chromium
       - run: npm run test:audit
+      - run: node scripts/test-continuous-reading.mjs
       - run: npm run tauri build
       - name: Package portable app with native engine
         shell: pwsh
