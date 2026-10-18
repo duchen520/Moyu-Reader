@@ -1,3 +1,4 @@
+mod auto_update;
 mod cover_cache;
 mod local_tts;
 mod chapter_html;
@@ -19,6 +20,26 @@ mod desktop {
         } else {
             Err("远程窗口不能访问本地账号服务".into())
         }
+    }
+
+    #[tauri::command]
+    async fn update_download(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::auto_update::UpdateService>>, version: String, progress: tauri::ipc::Channel<Value>) -> Result<Value, String> {
+        local_only(&window)?;
+        service.download(&version, env!("CARGO_PKG_VERSION"), &move |value| { let _ = progress.send(value); }).await
+    }
+    #[tauri::command]
+    fn update_cancel(window: WebviewWindow, service: State<'_, std::sync::Arc<crate::auto_update::UpdateService>>) -> Result<(), String> {
+        local_only(&window)?; service.cancel()
+    }
+    #[tauri::command]
+    async fn update_install(window: WebviewWindow, app: tauri::AppHandle, service: State<'_, std::sync::Arc<crate::auto_update::UpdateService>>) -> Result<(), String> {
+        local_only(&window)?;
+        let service = service.inner().clone();
+        let executable = std::env::current_exe().map_err(|e| format!("无法确定应用位置：{e}"))?;
+        tauri::async_runtime::spawn_blocking(move || service.launch_installer(&executable)).await.map_err(|_| "安装启动任务失败")??;
+        // Exit only after the verified installer was successfully started.
+        std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_millis(500)); app.exit(0); });
+        Ok(())
     }
 
     #[tauri::command]
@@ -328,6 +349,8 @@ mod desktop {
                     std::path::PathBuf::from(profile).join("tomato-cover-cache")
                 } else { app.path().app_cache_dir()?.join("covers") };
                 app.manage(crate::cover_cache::CoverCache::new(root));
+                let updates = if let Some(profile) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") { std::path::PathBuf::from(profile).join("moyu-updates") } else { app.path().app_cache_dir()?.join("updates") };
+                app.manage(std::sync::Arc::new(crate::auto_update::UpdateService::new(updates)));
                 let data = if let Some(profile)=std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
                     std::path::PathBuf::from(profile).join("tomato-kokoro")
                 } else {app.path().app_local_data_dir()?.join("kokoro")};
@@ -336,6 +359,9 @@ mod desktop {
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
+                update_download,
+                update_cancel,
+                update_install,
                 official_cover,
                 kokoro_status,
                 kokoro_import,
