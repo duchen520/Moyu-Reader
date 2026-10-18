@@ -3,7 +3,7 @@ import { initializeBooks, savedBooks, addBooks, removeBook } from './bookDatabas
 
 const PREFIX = 'tomato-reader-v01:';
 export const DEFAULT_PREFERENCES: Preferences = {
-  theme: 'paper', fontSize: 19, lineHeight: 1.95, contentWidth: 760, autoUploadProgress: false,
+  readingMode: 'normal', theme: 'paper', fontSize: 19, lineHeight: 1.95, contentWidth: 760, autoUploadProgress: false,
 };
 
 function read<T>(key: string, fallback: T): T {
