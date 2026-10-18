@@ -1,6 +1,8 @@
 import React, { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Copy, Check, Home } from 'lucide-react';
+import { APP_NAME } from '../lib/branding';
+import { WindowFallback } from './WindowTitlebar';
 
 interface Props {
   children: ReactNode;
@@ -49,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   handleCopy = () => {
     const errorDetails = [
-      `Tomato Reader 崩溃错误日志`,
+      `${APP_NAME} 崩溃错误日志`,
       `时间: ${new Date().toLocaleString()}`,
       `错误信息: ${this.state.error?.message || '未知错误'}`,
       `错误堆栈:\n${this.state.error?.stack || '无'}\n`,
@@ -67,7 +69,7 @@ export class ErrorBoundary extends Component<Props, State> {
   override render() {
     if (this.state.hasError) {
       return (
-        <div className="crash-screen" role="alert">
+        <WindowFallback><div className="crash-screen" role="alert">
           <div className="crash-card">
             <div className="crash-header">
               <div className="crash-icon-box">
@@ -105,7 +107,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </button>
             </div>
           </div>
-        </div>
+        </div></WindowFallback>
       );
     }
 

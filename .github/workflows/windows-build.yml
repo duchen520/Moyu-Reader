@@ -2,7 +2,7 @@ name: Build Windows desktop
 'on':
   workflow_dispatch:
   push:
-    branches: [main, fix/tomato-reader-0.5.17]
+    branches: [main, 'fix/**']
   pull_request:
 permissions:
   contents: read

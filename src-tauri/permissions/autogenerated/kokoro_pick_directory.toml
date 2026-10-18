@@ -2,10 +2,10 @@
 
 [[permission]]
 identifier = "allow-kokoro-pick-directory"
-description = "Enables the kokoro_pick_directory command."
+description = "Enables the kokoro_pick_directory command without any pre-configured scope."
 commands.allow = ["kokoro_pick_directory"]
 
 [[permission]]
 identifier = "deny-kokoro-pick-directory"
-description = "Denies the kokoro_pick_directory command."
+description = "Denies the kokoro_pick_directory command without any pre-configured scope."
 commands.deny = ["kokoro_pick_directory"]

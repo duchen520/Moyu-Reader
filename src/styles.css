@@ -118,6 +118,8 @@ h1, h2, h3, h4, p {
    ========================================================================== */
 .app-shell {
   display: flex;
+  position: relative;
+  padding-top: 36px;
   width: 100%;
   height: 100vh;
   min-height: 0;
@@ -126,6 +128,34 @@ h1, h2, h3, h4, p {
   color: var(--text-main);
   color-scheme: light;
 }
+
+.window-titlebar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  z-index: 100;
+  user-select: none;
+}
+.window-titlebar-brand { display: flex; align-items: center; gap: 9px; padding-left: 16px; min-width: 160px; font-size: 12px; font-weight: 600; letter-spacing: 2px; }
+.window-titlebar-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; color: #a7d8cc; background: #233b3b; }
+.window-titlebar-mark svg { pointer-events: none; }
+.window-titlebar-context { position: absolute; left: 50%; transform: translateX(-50%); max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--text-muted); }
+.window-titlebar-controls { display: flex; align-self: stretch; margin-left: auto; }
+.window-titlebar-controls button { display: grid; place-items: center; width: 46px; padding: 0; border-radius: 0; color: var(--text-secondary); transition: background .12s ease, color .12s ease; }
+.window-titlebar-controls button:hover { color: var(--text-main); background: var(--bg-hover); }
+.window-titlebar-controls .window-close:hover { color: #fff; background: #c43b4c; }
+.window-titlebar-controls button:focus-visible { outline-offset: -3px; }
+.window-titlebar-error { margin-left: auto; padding: 0 10px; font-size: 11px; color: var(--danger-text); }
+.window-titlebar-error + .window-titlebar-controls { margin-left: 0; }
+.desktop-fallback > .library-startup, .desktop-fallback > .crash-screen { flex: 1; height: 100%; min-height: 0; overflow: auto; }
+.brand-icon.moyu-mark { background: #233b3b; color: #a7d8cc; box-shadow: 0 5px 16px rgba(18, 43, 43, .16); }
+.brand-text { min-width: 0; }
+.brand .brand-text small { font-size: 9px; letter-spacing: .5px; font-weight: 500; }
 
 .app-shell.theme-night {
   --bg-app: #090d16;
