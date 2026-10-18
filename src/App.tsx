@@ -6,6 +6,9 @@ import {
   Library, Minus, Moon, Plus, RefreshCw, Search, Settings2, Sparkles, Sun, Trash2, Trophy, UploadCloud, UserRound, X,
 } from 'lucide-react';
 import { importBook } from './lib/importBook';
+import { BackupPanel } from './components/BackupPanel';
+import { startAutoBackups } from './lib/backups';
+import { focusChapterCache, limitChapterCache, touchChapterCache } from './lib/chapterCache';
 import { SoftwareUpdate, useSoftwareUpdate } from './components/SoftwareUpdate';
 import { CURRENT_VERSION } from './lib/updater';
 import { openOfficialWebsite } from './lib/officialSite';
@@ -82,10 +85,15 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(null), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
-  const update = useSoftwareUpdate(setNotice);
+  useEffect(startAutoBackups, []);
+  const update = useSoftwareUpdate(setNotice, () => { if (importing.current) throw Error('正在导入书籍，请稍后重试安装。'); });
   const fileInput = useRef<HTMLInputElement>(null);
   const activeBook = books.find(b => b.id === activeBookId) ?? null;
   const chapter = activeBook?.chapters[readerChapter] ?? null;
+  useEffect(() => {
+    focusChapterCache(screen === 'reader' ? activeBookId : null, readerChapter);
+    if (activeBookId && chapter) touchChapterCache(activeBookId, chapter.id);
+  }, [screen, activeBookId, chapter?.id, readerChapter]);
   const syncContext = useRef({ screen, bookId: activeBookId, chapterId: chapter?.id });
   syncContext.current = { screen, bookId: activeBookId, chapterId: chapter?.id };
 
@@ -133,7 +141,7 @@ export default function App() {
     const next = await storage.addBooks(additions);
     const merged = new Map(next.map(b => [b.id, b]));
     setShelfIds(new Set(next.map(b => b.id)));
-    setBooks(old => [...old.filter(b => !merged.has(b.id)), ...next]);
+    setBooks(old => limitChapterCache([...old.filter(b => !merged.has(b.id)), ...next]));
   };
 
   const saveReading = useCallback((bookId: string, chapterIndex: number, scrollRatio = 0, paragraphIndex = 0) => {
@@ -145,11 +153,12 @@ export default function App() {
 
   const enterBook = async (book: Book, chapterIndex: number, restoreLocal: boolean) => {
     const generation = openGeneration.current;
+    focusChapterCache(book.id, chapterIndex);
     if (book.source === 'official') {
       try { await persistBooks([book]); } catch { flash('作品已打开，但书架保存失败，请释放本地存储空间后重新收藏。'); }
     }
     if (generation !== openGeneration.current) return;
-    setBooks(old => old.some(b => b.id === book.id) ? old.map(b => b.id === book.id ? book : b) : [...old, book]);
+    setBooks(old => limitChapterCache(old.some(b => b.id === book.id) ? old.map(b => b.id === book.id ? book : b) : [...old, book]));
     readerEntryProgress.current = restoreLocal ? progressRef.current[book.id] : undefined;
     setActiveBookId(book.id);
     setReaderChapter(chapterIndex);
@@ -361,7 +370,10 @@ export default function App() {
       if (raw.id !== target.id) throw new Error('官方返回章节与请求不匹配，请重试。');
       const loaded = plainChapter(raw);
       if (!loaded.content) throw new Error('官方正文没有可阅读的文字。');
-      setBooks(old => old.map(b => b.id === book.id ? { ...b, chapters: b.chapters.map(c => c.id === target.id ? { ...c, ...loaded, title: loaded.title || c.title } : c) } : b));
+      touchChapterCache(book.id, target.id);
+      const currentFocus = chapterContext.current;
+      focusChapterCache(currentFocus.screen === 'reader' ? currentFocus.bookId ?? null : null, currentFocus.index);
+      setBooks(old => limitChapterCache(old.map(b => b.id === book.id ? { ...b, chapters: b.chapters.map(c => c.id === target.id ? { ...c, ...loaded, title: loaded.title || c.title } : c) } : b)));
       } finally {
         const next = chapterSlots.current.waiting.shift();
         if (next) next(); else chapterSlots.current.active--;
@@ -811,6 +823,7 @@ export default function App() {
               <div className="eyebrow" style={{ marginTop: '28px' }}>SOFTWARE UPDATES</div>
               <h2>软件检查更新</h2>
               <p className="subheading">检查{APP_NAME}最新版本与功能升级。</p>
+              <BackupPanel />
               <SoftwareUpdate update={update} />
 
               <div className="settings-bottom-actions">

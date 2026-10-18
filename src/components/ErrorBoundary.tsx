@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Copy, Check, Home } from 'lucide-react';
 import { APP_NAME } from '../lib/branding';
 import { WindowFallback } from './WindowTitlebar';
+import { BackupPanel } from './BackupPanel';
 
 interface Props {
   children: ReactNode;
@@ -77,7 +78,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
               <h2>应用遇到意外错误</h2>
               <p className="crash-subtext">
-                阅读器捕获到了一个未处理的界面渲染异常。您的本地书架数据和账号均未丢失。
+                阅读器捕获到了一个界面异常。本次没有清空本地资料，可重新载入或从备份恢复。
               </p>
             </div>
 
@@ -106,6 +107,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <span>返回书架首页</span>
               </button>
             </div>
+            <BackupPanel healthy={false} />
           </div>
         </div></WindowFallback>
       );

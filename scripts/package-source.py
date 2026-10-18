@@ -8,7 +8,7 @@ import zipfile
 root = Path(__file__).resolve().parent.parent
 version = json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']
 destination = Path(sys.argv[1]) if len(sys.argv) > 1 else root.parent / f'moyu-reader-v{version}-source.zip'
-excluded = {'node_modules', 'target', 'dist', 'test-output', '.git', '.codex', '.agents', '__pycache__', '.venv'}
+excluded = {'node_modules', 'target', 'dist', 'test-output', '.git', '.codex', '.agents', '__pycache__', '.venv', 'backups', 'moyu-backups'}
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
     for directory, folders, filenames in os.walk(root):
         folders[:] = [name for name in folders if name not in excluded]
@@ -17,7 +17,7 @@ with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
             relative = path.relative_to(root)
             if path.resolve() == destination.resolve():
                 continue
-            if path.name.startswith('.env') or path.suffix.lower() in {'.zip', '.log', '.exe', '.pdb', '.dll', '.lib', '.exp', '.obj', '.onnx', '.bin'}:
+            if path.name.startswith('.env') or path.suffix.lower() in {'.zip', '.log', '.exe', '.pdb', '.dll', '.lib', '.exp', '.obj', '.onnx', '.bin', '.moyubak', '.pending'}:
                 continue
             archive.write(path, Path(f'moyu-reader-v{version}') / relative)
 print(destination)

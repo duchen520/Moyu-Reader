@@ -4006,3 +4006,11 @@ input:not([type=range]):not([type=file]), select, textarea { color: var(--text-m
 .update-error { color: var(--text-main); border-left: 3px solid var(--brand-orange); padding-left: 10px; }
 .update-notes { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 .update-notes pre { font-family: inherit; white-space: pre-wrap; max-height: 140px; overflow-y: auto; padding: 12px; background: var(--bg-sidebar); color: var(--text-muted); }
+
+.backup-panel { margin: 24px 0; padding: 24px; }
+.backup-panel h2 { margin: 0 0 8px; font-size: 20px; }
+.backup-list { max-height: 340px; overflow-y: auto; margin-top: 16px; }
+.backup-item { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border-light); }
+.backup-item p { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; }
+.backup-path { overflow-wrap: anywhere; color: var(--text-muted); font-size: 12px; }
+.library-startup .backup-panel { max-width: 840px; }

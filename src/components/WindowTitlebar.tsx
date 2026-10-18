@@ -51,5 +51,5 @@ export function WindowTitlebar({ context = '私人阅读空间' }: { context?: s
 
 // A frameless window must still be movable and closable during startup or errors.
 export function WindowFallback({ children }: { children: ReactNode }) {
-  return <div className={`app-shell desktop-fallback theme-${storage.preferences().theme}`}><WindowTitlebar/>{children}</div>;
+  return <div className={`app-shell desktop-fallback theme-${storage.preferences()?.theme ?? 'paper'}`}><WindowTitlebar/>{children}</div>;
 }

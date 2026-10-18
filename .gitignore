@@ -11,3 +11,7 @@ test-output/
 src-tauri/resources/kokoro/engine/*.dll
 
 release-output/
+*.moyubak
+*.moyubak.pending
+backups/
+moyu-backups/
