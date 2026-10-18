@@ -62,6 +62,10 @@ try {
   await page.getByLabel('番茄AI音色').locator('option').nth(1).waitFor({ state: 'attached' });
   assert.equal((await ttsCalls()).length, 0);
   check('Voice list loads without automatically requesting or playing a chapter');
+  await page.getByRole('button', { name: '官方有声', exact: true }).click();
+  await page.getByText('官方本次未提供真人有声版，可切换到「番茄AI音色」朗读。', { exact: true }).waitFor();
+  assert.equal(await page.locator('.official-audio .audio-error').count(), 0);
+  check('An AI-only book shows a normal recorded-edition unavailable state and preserves AI voices');
   await play(); await running();
   assert.equal((await ttsCalls())[0].args.toneId, '74');
   assert.ok((await player.getAttribute('src')).startsWith('blob:'));
