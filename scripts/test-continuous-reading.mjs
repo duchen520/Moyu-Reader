@@ -132,9 +132,11 @@ try {
     canvas.scrollTop += section.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 100;
   });
   await p.waitForFunction(() => document.querySelector('.chapter-item.current .chapter-index')?.textContent === '149');
-  const autoBefore = await p.locator('.reading-canvas').evaluate(el => el.scrollTop);
-  await p.waitForTimeout(300);
-  assert.ok(await p.locator('.reading-canvas').evaluate(el => el.scrollTop) > autoBefore);
+  // Trimming a chapter above the viewport intentionally reduces scrollTop.
+  // Assert actual text movement after that trim instead of a global offset.
+  await p.waitForFunction(() => !document.querySelector('[data-chapter-index="145"]'));
+  const autoBefore = await p.locator('[data-chapter-index="148"]').evaluate(el => el.getBoundingClientRect().top);
+  await p.waitForFunction(top => document.querySelector('[data-chapter-index="148"]').getBoundingClientRect().top < top - 2, autoBefore);
   await p.locator('.audio-mini-pill').getByTitle('停止', { exact: true }).click();
   check('Automatic scrolling crosses a continuous chapter boundary and keeps moving');
   await p.close();

@@ -1,4 +1,4 @@
-export const CURRENT_VERSION = '0.5.19';
+export const CURRENT_VERSION = '0.5.20';
 
 export interface UpdateCheckResult {
   hasUpdate: boolean;
@@ -43,7 +43,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
 
-    const response = await fetch('https://api.github.com/repos/duchen520/Tomato-Reader/releases/latest', {
+    const response = await fetch('https://api.github.com/repos/duchen520/Moyu-Reader/releases/latest', {
       headers: {
         Accept: 'application/vnd.github.v3+json',
       },
@@ -51,12 +51,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     });
 
     if (response.status === 404) {
-      return {
-        hasUpdate: false,
-        currentVersion,
-        latestVersion: currentVersion,
-        releaseNotes: '当前已是最新版本，暂未发现更新。',
-      };
+      throw Error('更新仓库暂未提供可用发布版本，请稍后重试');
     }
 
     if (!response.ok) {
@@ -72,8 +67,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     if (Array.isArray(data.assets)) {
       const assets = data.assets.filter((a: { name?: string; browser_download_url?: string } | null) =>
         a && typeof a.name === 'string' && typeof a.browser_download_url === 'string');
-      const asset = assets.find((a: { name: string }) => /-setup\.exe$/i.test(a.name))
-        ?? assets.find((a: { name: string }) => /\.exe$/i.test(a.name));
+      const asset = assets.find((a: { name: string }) => /-setup\.exe$/i.test(a.name) && /x64/i.test(a.name));
       if (asset?.browser_download_url) {
         installerUrl = asset.browser_download_url;
       }
@@ -86,7 +80,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
       releaseTitle: data.name || `v${latestVersion}`,
       releaseNotes: data.body || '',
       publishedAt: data.published_at ? new Date(data.published_at).toLocaleDateString() : undefined,
-      downloadUrl: data.html_url || 'https://github.com/duchen520/Tomato-Reader/releases',
+      downloadUrl: data.html_url || 'https://github.com/duchen520/Moyu-Reader/releases',
       installerUrl,
     };
   } catch (err) {

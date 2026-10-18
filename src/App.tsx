@@ -6,8 +6,8 @@ import {
   Library, Minus, Moon, Plus, RefreshCw, Search, Settings2, Sparkles, Sun, Trash2, Trophy, UploadCloud, UserRound, X,
 } from 'lucide-react';
 import { importBook } from './lib/importBook';
-import { checkForUpdate, CURRENT_VERSION } from './lib/updater';
-import type { UpdateCheckResult } from './lib/updater';
+import { SoftwareUpdate, useSoftwareUpdate } from './components/SoftwareUpdate';
+import { CURRENT_VERSION } from './lib/updater';
 import { openOfficialWebsite } from './lib/officialSite';
 import { official, errorMessage, plainChapter } from './lib/official';
 import type { OfficialUser } from './lib/official';
@@ -82,24 +82,7 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(null), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
-  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
-  const [updateChecking, setUpdateChecking] = useState(false);
-  const handleCheckUpdate = async () => {
-    setUpdateChecking(true);
-    try {
-      const res = await checkForUpdate();
-      setUpdateResult(res);
-      if (res.hasUpdate) {
-        flash(`发现新版本 v${res.latestVersion}！`);
-      } else if (!res.error) {
-        flash(`当前已是最新版本 (v${res.currentVersion})。`);
-      }
-    } catch {
-      flash('检查更新失败，请检查网络连接后重试。');
-    } finally {
-      setUpdateChecking(false);
-    }
-  };
+  const update = useSoftwareUpdate(setNotice);
   const fileInput = useRef<HTMLInputElement>(null);
   const activeBook = books.find(b => b.id === activeBookId) ?? null;
   const chapter = activeBook?.chapters[readerChapter] ?? null;
@@ -828,60 +811,7 @@ export default function App() {
               <div className="eyebrow" style={{ marginTop: '28px' }}>SOFTWARE UPDATES</div>
               <h2>软件检查更新</h2>
               <p className="subheading">检查{APP_NAME}最新版本与功能升级。</p>
-              <div className="settings-card update-card">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '15px' }}>
-                      当前版本: v{CURRENT_VERSION}
-                    </div>
-                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      {updateChecking
-                        ? '正在连接服务器检查新版本…'
-                        : updateResult?.hasUpdate
-                        ? `发现新版本: v${updateResult.latestVersion}${updateResult.publishedAt ? ` (发布于 ${updateResult.publishedAt})` : ''}`
-                        : updateResult?.error
-                        ? `检查更新提示: ${updateResult.error}`
-                        : updateResult
-                        ? '已是最新版本，无需更新。'
-                        : '点击按钮即可在线检测官方最新版本。'}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      type="button"
-                      className="outline-button"
-                      disabled={updateChecking}
-                      onClick={() => void handleCheckUpdate()}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
-                    >
-                      <RefreshCw size={14} className={updateChecking ? 'spin' : ''} />
-                      <span>{updateChecking ? '检查中…' : '检查更新'}</span>
-                    </button>
-                    {updateResult?.hasUpdate && (
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => {
-                          const url = updateResult.installerUrl || updateResult.downloadUrl || 'https://github.com/duchen520/Tomato-Reader/releases';
-                          window.open(url, '_blank', 'noopener,noreferrer');
-                        }}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
-                      >
-                        <ExternalLink size={14} />
-                        <span>下载更新</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {updateResult?.hasUpdate && updateResult.releaseNotes && (
-                  <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-light)' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand-orange)', marginBottom: '6px' }}>更新说明：</div>
-                    <pre style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '140px', overflowY: 'auto', background: 'var(--bg-sidebar)', padding: '10px', borderRadius: '8px', margin: 0 }}>
-                      {updateResult.releaseNotes}
-                    </pre>
-                  </div>
-                )}
-              </div>
+              <SoftwareUpdate update={update} />
 
               <div className="settings-bottom-actions">
                 <button className="primary-button" onClick={() => navigate('bookshelf')}>

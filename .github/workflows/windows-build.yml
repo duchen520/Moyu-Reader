@@ -31,6 +31,7 @@ jobs:
       - run: npx playwright install chromium
       - run: npm run test:audit
       - run: node scripts/test-continuous-reading.mjs
+      - run: node scripts/test-app-update.mjs
       - run: npm run tauri build
       - name: Package portable app with native engine
         shell: pwsh
