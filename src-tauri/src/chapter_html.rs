@@ -6,6 +6,7 @@ use std::cell::RefCell;
 struct Frame {
     name: String,
     blocks: usize,
+    continuation_separator: bool,
     has_text: bool,
 }
 #[derive(Default, Debug)]
@@ -34,23 +35,35 @@ impl TokenSink for Sink {
             if matches!(name, "script" | "style" | "iframe" | "object" | "svg") {
                 state.invalid = true;
             }
-            if matches!(name, "blk" | "p" | "h1") {
+            // Published books split a paragraph into runs at line breaks and
+            // inline footnote images. Neither creates another body paragraph.
+            if matches!(name, "br" | "img") && tag.kind == TagKind::StartTag {
+                if let Some(frame) = state.stack.last_mut() {
+                    if matches!(frame.name.as_str(), "p" | "h1" | "aside") && frame.blocks > 0 {
+                        frame.continuation_separator = true;
+                    }
+                }
+            }
+            if matches!(name, "blk" | "p" | "h1" | "aside") {
                 if tag.kind == TagKind::StartTag {
                     if tag.self_closing { state.invalid = true; }
                     if name == "blk" {
                         let parent = state.stack.last_mut();
                         match parent {
-                            Some(frame) if matches!(frame.name.as_str(), "p" | "h1") && frame.blocks == 0 => { frame.blocks += 1; }
+                            Some(frame) if matches!(frame.name.as_str(), "p" | "h1" | "aside") && (frame.blocks == 0 || frame.continuation_separator) => {
+                                frame.blocks += 1;
+                                frame.continuation_separator = false;
+                            }
                             _ => state.invalid = true,
                         }
-                        if state.stack.last().is_some_and(|frame| frame.name == "p") { state.wrapped_paragraphs += 1; }
+                        if state.stack.last().is_some_and(|frame| frame.name == "p" && frame.blocks == 1) { state.wrapped_paragraphs += 1; }
                         state.blocks += 1;
                     } else {
                         if !state.stack.is_empty() { state.invalid = true; }
                         if name == "p" { state.paragraphs += 1; }
-                        else { state.headings += 1; }
+                        else if name == "h1" { state.headings += 1; }
                     }
-                    state.stack.push(Frame { name: name.to_owned(), blocks: 0, has_text: false });
+                    state.stack.push(Frame { name: name.to_owned(), blocks: 0, continuation_separator: false, has_text: false });
                 } else {
                     match state.stack.pop() {
                         Some(frame) if frame.name == name => {
@@ -147,6 +160,25 @@ mod tests {
         assert!(validate(r#"<H1><BLK>标题</BLK></H1><P idx="0"><BLK>正文</BLK></P><P></P>"#, 2, Some(2)).is_ok());
     }
     #[test]
+    fn line_break_continuations_keep_the_same_paragraph_count() {
+        let html = "<h1><span><blk>上行标题</blk></span><br/><blk>下行标题</blk></h1><p><blk>正文上行</blk><br/><blk>正文下行</blk><br><blk>第三行</blk></p>";
+        assert!(validate(html, 1, Some(1)).is_ok());
+        assert!(validate(html, 2, Some(1)).is_ok());
+        assert!(validate(html, 2, Some(2)).is_err());
+        assert!(validate(&html.replacen("</blk>", "", 1), 1, Some(1)).is_err());
+        assert!(validate("<p><blk>正文</blk><br/><blk>未结束", 1, Some(1)).is_err());
+        assert!(validate("<p><blk>注释前</blk><a><img/></a><blk>注释后</blk></p>", 1, Some(1)).is_ok());
+        assert!(validate("<p><blk>注释前</blk><a><img/></a><blk>注释后</blk></p>", 2, Some(2)).is_err());
+    }
+    #[test]
+    fn footnotes_do_not_count_as_missing_body_paragraphs() {
+        let html = "<h1><blk>标题</blk></h1><p><blk>正文</blk></p><section><aside><blk>注释</blk></aside></section>";
+        assert!(validate(html, 1, Some(1)).is_ok());
+        assert!(validate(html, 2, Some(2)).is_err());
+        assert!(validate(&html.replace("<p><blk>正文</blk></p>", ""), 1, Some(1)).is_err());
+        assert!(validate(&html.replace("</aside>", ""), 1, Some(1)).is_err());
+    }
+    #[test]
     fn comments_attributes_and_similarly_named_tags_are_not_paragraphs() {
         assert!(validate(r#"<!-- <p>not text</p> --><picture></picture><p title="<p>">正文</p>"#, 1, None).is_ok());
         assert!(validate("<picture></picture>", 1, None).is_err());
@@ -183,6 +215,6 @@ mod tests {
             assert!(validate(&html.replacen("</blk>","",1),expected,free).is_err(), "unclosed block: {}",path.display());
             checked += 1;
         }
-        assert_eq!(checked, 13);
+        assert_eq!(checked, 15);
     }
 }

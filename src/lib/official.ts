@@ -75,8 +75,9 @@ export function plainChapter(raw: Chapter): Chapter {
   const doc = new DOMParser().parseFromString(raw.content, 'text/html');
   doc.querySelectorAll('script,style,iframe,object,svg').forEach(el => el.remove());
   doc.querySelectorAll('br').forEach(el => el.replaceWith('\n'));
-  const parts = [...doc.querySelectorAll('p')].map(el => {
-    const value = el.getAttribute('idx');
+  const parts = [...doc.querySelectorAll('p,aside')].filter(el => !el.parentElement?.closest('p,aside')).map(el => {
+    // Notes are readable text, but are not body paragraph IDs for comments.
+    const value = el.tagName === 'P' ? el.getAttribute('idx') : null;
     return { text: el.textContent?.replace(/\s*\n\s*/g, ' ').trim() ?? '', id: value !== null && /^\d{1,6}$/.test(value) ? Number(value) : null };
   }).filter(p => p.text);
   if (parts.length) return { ...raw, content: parts.map(p => p.text).join('\n\n'), paragraphIds: parts.map(p => p.id), loaded: true };

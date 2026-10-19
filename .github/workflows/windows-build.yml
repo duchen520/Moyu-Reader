@@ -33,6 +33,7 @@ jobs:
       - run: node scripts/test-continuous-reading.mjs
       - run: node scripts/test-app-update.mjs
       - run: node scripts/test-chapter-cache.mjs
+      - run: node scripts/test-chapter-layout.mjs
       - run: node scripts/test-backups.mjs
       - run: npm run tauri build
       - name: Package portable app with native engine
