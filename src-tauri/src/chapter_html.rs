@@ -6,7 +6,6 @@ use std::cell::RefCell;
 struct Frame {
     name: String,
     blocks: usize,
-    continuation_separator: bool,
     has_text: bool,
 }
 #[derive(Default, Debug)]
@@ -15,12 +14,17 @@ struct Structure {
     blocks: i64,
     paragraphs: i64,
     headings: i64,
+    text_headings: i64,
+    notes: i64,
     wrapped_paragraphs: i64,
     unwrapped_text_paragraphs: i64,
     invalid: bool,
 }
 #[derive(Default)]
 struct Sink(RefCell<Structure>);
+fn is_heading(name: &str) -> bool {
+    matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+}
 impl TokenSink for Sink {
     type Handle = ();
     fn process_token(&self, token: Token, _: u64) -> TokenSinkResult<()> {
@@ -35,24 +39,17 @@ impl TokenSink for Sink {
             if matches!(name, "script" | "style" | "iframe" | "object" | "svg") {
                 state.invalid = true;
             }
-            // Published books split a paragraph into runs at line breaks and
-            // inline footnote images. Neither creates another body paragraph.
-            if matches!(name, "br" | "img") && tag.kind == TagKind::StartTag {
-                if let Some(frame) = state.stack.last_mut() {
-                    if matches!(frame.name.as_str(), "p" | "h1" | "aside") && frame.blocks > 0 {
-                        frame.continuation_separator = true;
-                    }
-                }
-            }
-            if matches!(name, "blk" | "p" | "h1" | "aside") {
+            if matches!(name, "blk" | "p" | "aside") || is_heading(name) {
                 if tag.kind == TagKind::StartTag {
                     if tag.self_closing { state.invalid = true; }
                     if name == "blk" {
                         let parent = state.stack.last_mut();
                         match parent {
-                            Some(frame) if matches!(frame.name.as_str(), "p" | "h1" | "aside") && (frame.blocks == 0 || frame.continuation_separator) => {
+                            // blk is a text run: line breaks, superscripts,
+                            // inline formatting and notes may split one p into
+                            // several runs. Completeness counts p, not runs.
+                            Some(frame) if matches!(frame.name.as_str(), "p" | "aside") || is_heading(&frame.name) => {
                                 frame.blocks += 1;
-                                frame.continuation_separator = false;
                             }
                             _ => state.invalid = true,
                         }
@@ -61,13 +58,15 @@ impl TokenSink for Sink {
                     } else {
                         if !state.stack.is_empty() { state.invalid = true; }
                         if name == "p" { state.paragraphs += 1; }
-                        else if name == "h1" { state.headings += 1; }
+                        else if is_heading(name) { state.headings += 1; }
+                        else if name == "aside" { state.notes += 1; }
                     }
-                    state.stack.push(Frame { name: name.to_owned(), blocks: 0, continuation_separator: false, has_text: false });
+                    state.stack.push(Frame { name: name.to_owned(), blocks: 0, has_text: false });
                 } else {
                     match state.stack.pop() {
                         Some(frame) if frame.name == name => {
                             if name == "p" && frame.blocks == 0 && frame.has_text { state.unwrapped_text_paragraphs += 1; }
+                            if is_heading(name) && frame.has_text { state.text_headings += 1; }
                         }
                         _ => state.invalid = true,
                     }
@@ -85,6 +84,14 @@ pub(crate) fn validate(text: &str, expected: i64, free_paragraphs: Option<i64>) 
     let _ = tokenizer.feed(&input);
     tokenizer.end();
     let state = tokenizer.sink.0.borrow();
+    // Some published-book section dividers intentionally consist of a title.
+    // Accept only independently confirmed zero body counts and a closed,
+    // nonempty heading; do not infer an empty page from a missing response.
+    if expected == 0 && free_paragraphs == Some(0) && state.paragraphs == 0
+        && state.headings == 1 && state.text_headings == 1 && state.notes == 0
+        && !state.invalid && state.stack.is_empty() {
+        return Ok(());
+    }
     // paragraphs_num has both conventions, even within the same book and
     // text_type. free_para_nums consistently counts body <p> nodes in observed
     // responses, including empty layout paragraphs. Require that independent
@@ -155,6 +162,16 @@ mod tests {
         assert!(validate(html, 3, Some(3)).is_err());
     }
     #[test]
+    fn all_heading_levels_are_checked_without_counting_them_as_body() {
+        for tag in ["h1", "h2", "h3", "h4", "h5", "h6"] {
+            let html = format!("<{tag}><blk>标题</blk></{tag}><p><blk>正文</blk></p>");
+            assert!(validate(&html, 1, Some(1)).is_ok(), "{tag}");
+            assert!(validate(&html, 2, Some(1)).is_ok(), "{tag}");
+            assert!(validate(&html, 2, Some(2)).is_err(), "{tag}");
+            assert!(validate(&html.replace(&format!("</{tag}>"), ""), 1, Some(1)).is_err());
+        }
+    }
+    #[test]
     fn legacy_format_and_empty_layout_paragraph_keep_their_counts() {
         assert!(validate(r#"<h1>标题</h1><p idx="0">甲<br>乙</p><p idx="1"><em>丙</em></p>"#, 2, None).is_ok());
         assert!(validate(r#"<H1><BLK>标题</BLK></H1><P idx="0"><BLK>正文</BLK></P><P></P>"#, 2, Some(2)).is_ok());
@@ -179,6 +196,24 @@ mod tests {
         assert!(validate(&html.replace("</aside>", ""), 1, Some(1)).is_err());
     }
     #[test]
+    fn inline_text_runs_do_not_create_extra_body_paragraphs() {
+        let html = "<h2><blk>标题</blk></h2><p><blk>正文</blk><blk>续文</blk><sup><blk>上标</blk></sup><sub><blk>下标</blk></sub></p><aside><blk>注释</blk><sup><blk>注释上标</blk></sup></aside>";
+        assert!(validate(html, 1, Some(1)).is_ok());
+        assert!(validate(html, 2, Some(2)).is_err());
+        assert!(validate(&html.replace("</blk>", ""), 1, Some(1)).is_err());
+    }
+    #[test]
+    fn title_only_divider_requires_two_explicit_zero_body_counts() {
+        let html = "<h1><blk>附录</blk><br/><blk>会计资料</blk></h1>";
+        assert!(validate(html, 0, Some(0)).is_ok());
+        assert!(validate(html, 0, None).is_err());
+        assert!(validate(html, 1, Some(0)).is_err());
+        assert!(validate("", 0, Some(0)).is_err());
+        assert!(validate("<h1></h1>", 0, Some(0)).is_err());
+        assert!(validate("<h1><blk>附录</blk>", 0, Some(0)).is_err());
+        assert!(validate("<h1>附录</h1><p>正文</p>", 0, Some(0)).is_err());
+    }
+    #[test]
     fn comments_attributes_and_similarly_named_tags_are_not_paragraphs() {
         assert!(validate(r#"<!-- <p>not text</p> --><picture></picture><p title="<p>">正文</p>"#, 1, None).is_ok());
         assert!(validate("<picture></picture>", 1, None).is_err());
@@ -189,7 +224,6 @@ mod tests {
             ("<h1><blk>标题</blk></h1><p><blk>正文", 1),
             ("<h1><blk>标题</blk></h1><p><blk>正文</blk></p>", 3),
             ("<blk></blk><p><blk>正文</blk></p>", 2),
-            ("<p><blk>甲</blk><blk>乙</blk></p>", 1),
             ("<p><blk>甲</p></blk>", 1),
             ("<p><blk>甲</blk></p><p>乙</p>", 2),
             ("<p>正文</p>", 0), ("<h1>只有标题</h1>", 1),
@@ -216,5 +250,25 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 15);
+    }
+    #[test]
+    fn all_76_published_book_structures_pass_and_missing_paragraphs_fail() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/published-book-76.json");
+        let fixtures: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let rows = fixtures.as_array().unwrap();
+        assert_eq!(rows.len(), 76);
+        for (i, fixture) in rows.iter().enumerate() {
+            assert_eq!(fixture["chapter"].as_u64(), Some(i as u64 + 1));
+            let html = fixture["html"].as_str().unwrap();
+            let expected = fixture["expected"].as_i64().unwrap();
+            let free = fixture["freeParagraphs"].as_i64();
+            assert!(validate(html, expected, free).is_ok(), "chapter {}", i + 1);
+            if expected > 0 {
+                let start = html.find("<p ").or_else(|| html.find("<p>")).unwrap();
+                let end = start + html[start..].find("</p>").unwrap() + 4;
+                assert!(validate(&format!("{}{}", &html[..start], &html[end..]), expected, free).is_err(), "missing paragraph, chapter {}", i + 1);
+            }
+            assert!(validate(&html.replacen("</blk>", "", 1), expected, free).is_err(), "unclosed block, chapter {}", i + 1);
+        }
     }
 }
