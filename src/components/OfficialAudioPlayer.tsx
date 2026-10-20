@@ -185,6 +185,8 @@ export function OfficialAudioPlayer({ bookId, chapterId, chapterTitle, stopSigna
     if (!source) return;
     const next = fallbackUrls.current.shift();
     if (next) { pendingPlay.current = true; setSource(next);if(audio.current){audio.current.src=next;audio.current.load();}return; }
+    metadataReady.current = false; pendingPlay.current = false;
+    callbacks.current.onPlaybackStateChange?.(false, '官方音频播放失败');
     setError('音频播放失败，可能是地址过期、格式受限或网络不可达；可重新试播刷新地址。'); setStatus('音频播放失败');
   };
 

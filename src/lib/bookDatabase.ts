@@ -1,6 +1,7 @@
-import type { Book } from '../types';
+import type { Book, Chapter } from '../types';
 import { focusChapterCache, limitChapterCache } from './chapterCache';
 import { restoredState } from './restoredState';
+import { progressFrom } from './profile';
 
 const DATABASE = 'tomato-reader-library';
 const LEGACY_KEY = 'tomato-reader-v01:books';
@@ -80,7 +81,9 @@ export function initializeBooks(): Promise<void> {
     database = db;
     try {
       await migrate(db);
-      const saved = restoredState()?.progress ?? JSON.parse(localStorage.getItem('tomato-reader-v01:progress') ?? '{}');
+      let rawProgress: unknown;
+      try { rawProgress = restoredState()?.progress ?? JSON.parse(localStorage.getItem('tomato-reader-v01:progress') ?? '{}'); } catch { rawProgress = {}; }
+      const saved = progressFrom(rawProgress);
       const latest = Object.entries(saved).filter((entry): entry is [string, { chapterIndex: number; updatedAt: number }] => !!entry[1] && typeof entry[1] === 'object' && 'chapterIndex' in entry[1] && typeof entry[1].chapterIndex === 'number').sort((a, b) => (b[1].updatedAt ?? 0) - (a[1].updatedAt ?? 0))[0];
       if (latest) focusChapterCache(latest[0], latest[1].chapterIndex);
       books = limitChapterCache(await readAll(db));
@@ -94,17 +97,12 @@ export function initializeBooks(): Promise<void> {
 
 export const savedBooks = () => books;
 
-function change(additions: Book[], removeId?: string): Promise<Book[]> {
-  const operation = writes.then(async () => {
-    await initializeBooks();
+async function commit(next: Book[], removeId?: string, detail = 'books'): Promise<Book[]> {
     const db = database;
     if (!db) throw Error('本地书架连接已关闭，请重新启动后重试。');
-    const merged = new Map(books.map(book => [book.id, book]));
-    if (removeId !== undefined) merged.delete(removeId);
-    for (const book of additions) merged.set(book.id, book);
-    const next = limitChapterCache([...merged.values()]);
     const previous = new Map(books.map(book => [book.id, book]));
     const changed = next.filter(book => previous.get(book.id) !== book);
+    if (!changed.length && removeId === undefined) return books;
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(['books', 'metadata'], 'readwrite', { durability: 'strict' });
       tx.onabort = () => reject(tx.error ?? Error('书架保存失败，可能是可用空间不足。'));
@@ -118,8 +116,17 @@ function change(additions: Book[], removeId?: string): Promise<Book[]> {
     });
     // Neither the visible shelf nor the in-memory cache changes on failure.
     books = next;
-    window.dispatchEvent(new CustomEvent('moyu-library-changed', { detail: 'books' }));
+    window.dispatchEvent(new CustomEvent('moyu-library-changed', { detail }));
     return books;
+}
+
+function change(additions: Book[], removeId?: string): Promise<Book[]> {
+  const operation = writes.then(async () => {
+    await initializeBooks();
+    const merged = new Map(books.map(book => [book.id, book]));
+    if (removeId !== undefined) merged.delete(removeId);
+    for (const book of additions) merged.set(book.id, book);
+    return commit(limitChapterCache([...merged.values()]), removeId);
   });
   writes = operation.catch(() => {});
   return operation;
@@ -128,6 +135,23 @@ function change(additions: Book[], removeId?: string): Promise<Book[]> {
 export const addBooks = (additions: Book[]) => change(additions);
 export const removeBook = (id: string) => change([], id);
 export const whenBooksIdle = () => writes.then(() => {});
+
+// Cache writes merge only the requested chapter into the latest shelf inside
+// the same queue as deletion/import. A late response must not revive a book.
+export function cacheChapter(bookId: string, chapter: Chapter): Promise<Book[]> {
+  const operation = writes.then(async () => {
+    await initializeBooks();
+    const book = books.find(b => b.id === bookId);
+    if (!book || book.source !== 'official' || !chapter.loaded || !chapter.content) return books;
+    const index = book.chapters.findIndex(c => c.id === chapter.id);
+    if (index < 0) return books;
+    const chapters = [...book.chapters];
+    chapters[index] = { ...chapters[index], ...chapter, title: chapter.title || chapters[index].title };
+    return commit(limitChapterCache(books.map(b => b.id === bookId ? { ...b, chapters } : b)), undefined, 'cache');
+  });
+  writes = operation.catch(() => {});
+  return operation;
+}
 
 // Commit recovery into a NEW database, then let the caller atomically switch
 // the single localStorage record holding its database/progress/preferences.

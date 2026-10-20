@@ -17,7 +17,7 @@ export function useContinuousReading({ enabled, book, index, prefs, canvas, init
   const sections = useRef(new Map<number, HTMLElement>());
   const visible = useRef(index);
   const ready = useRef(false);
-  const anchor = useRef<{ index: number; offset: number } | null>(null);
+  const anchor = useRef<{ index: number; offset: number; scrollTop: number; maxScroll: number } | null>(null);
   const pendingJump = useRef<{ index: number; ratio: number } | null>({ index, ratio: initialProgress?.chapterIndex === index ? initialProgress.scrollRatio ?? 0 : 0 });
   const context = useRef({ book, index, onVisible, loadChapter });
   context.current = { book, index, onVisible, loadChapter };
@@ -26,7 +26,8 @@ export function useContinuousReading({ enabled, book, index, prefs, canvas, init
 
   const rememberAnchor = () => {
     const el = canvas.current, section = sections.current.get(visible.current);
-    if (el && section) anchor.current = { index: visible.current, offset: section.getBoundingClientRect().top - el.getBoundingClientRect().top };
+    if (el && section) anchor.current = { index: visible.current, offset: section.getBoundingClientRect().top - el.getBoundingClientRect().top,
+      scrollTop: el.scrollTop, maxScroll: Math.max(0, el.scrollHeight - el.clientHeight) };
   };
   const position = () => {
     const el = canvas.current, section = sections.current.get(visible.current);
@@ -77,7 +78,17 @@ export function useContinuousReading({ enabled, book, index, prefs, canvas, init
       if (book.chapters[target.index]?.content) pendingJump.current = null;
     } else if (anchor.current) {
       const section = sections.current.get(anchor.current.index);
-      if (section) el.scrollTop += section.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.current.offset;
+      if (section) {
+        const previous = anchor.current;
+        // A scroll event may still be queued when a prefetch commits. Preserve
+        // that movement instead of restoring the last event's stale position.
+        // Removing sections can also clamp scrollTop without any user movement.
+        const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+        const clamped = maxScroll < previous.maxScroll && Math.abs(el.scrollTop - maxScroll) < 1
+          && previous.scrollTop > maxScroll;
+        const pendingScroll = clamped ? 0 : el.scrollTop - previous.scrollTop;
+        el.scrollTop += section.getBoundingClientRect().top - el.getBoundingClientRect().top - previous.offset + pendingScroll;
+      }
     }
     rememberAnchor();
   }, [enabled, center, index, layoutKey, jumpVersion, prefs.fontSize, prefs.lineHeight, prefs.contentWidth]);

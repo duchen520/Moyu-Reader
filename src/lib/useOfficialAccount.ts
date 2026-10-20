@@ -19,10 +19,14 @@ export function useOfficialAccount() {
   const accountRequest = useRef<Promise<OfficialUser | null> | null>(null);
   const resolved = useRef(false);
   const verifiedAt = useRef(0);
+  const sessionEpoch = useRef(0);
+  const sessionVersion = useCallback(() => sessionEpoch.current, []);
 
   const acceptUser = useCallback((next: OfficialUser | null) => {
     accountGeneration.current++;
+    accountRequest.current = null;
     if (userRef.current?.id !== next?.id) {
+      sessionEpoch.current++;
       shelfGeneration.current++;
       shelfRequest.current = null;
       setShelf([]); setShelfLoaded(false); setShelfBusy(false);
@@ -53,12 +57,12 @@ export function useOfficialAccount() {
 
   const getUser = useCallback(async () => {
     if (resolved.current && Date.now() - verifiedAt.current < 60000) return userRef.current;
-    if (accountRequest.current) return accountRequest.current;
     const generation = accountGeneration.current;
-    const request = official.account();
+    const request = accountRequest.current ?? official.account();
     accountRequest.current = request;
     try {
       const next = await request;
+      if (generation !== accountGeneration.current) return userRef.current;
       if (mounted.current && generation === accountGeneration.current) acceptUser(next);
       return next;
     } finally { if (accountRequest.current === request) accountRequest.current = null; }
@@ -108,7 +112,7 @@ export function useOfficialAccount() {
     if (user?.id) void refreshShelf();
   }, [user?.id, refreshShelf]);
 
-  return { user, checking, accountError, checkAccount, getUser, acceptUser,
+  return { user, checking, accountError, checkAccount, getUser, acceptUser, sessionVersion,
     shelf, shelfBusy, shelfError, shelfWarning, shelfLoaded, refreshShelf };
 }
 

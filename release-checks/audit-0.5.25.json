@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "version": "0.5.25",
+  "date": "2026-10-19",
+  "browser": {
+    "services": "mocked",
+    "suites": [
+      {
+        "name": "test-unit.mjs",
+        "code": 0,
+        "ms": 272
+      },
+      {
+        "name": "test-deep-loading.mjs",
+        "code": 0,
+        "ms": 28267
+      },
+      {
+        "name": "test-0517-audit.mjs",
+        "code": 0,
+        "ms": 8488
+      },
+      {
+        "name": "test-0517-playback.mjs",
+        "code": 0,
+        "ms": 14466
+      },
+      {
+        "name": "test-loading.mjs",
+        "code": 0,
+        "ms": 23416
+      },
+      {
+        "name": "test-cloud-startup.mjs",
+        "code": 0,
+        "ms": 10788
+      },
+      {
+        "name": "test-auto-upload.mjs",
+        "code": 0,
+        "ms": 60005
+      },
+      {
+        "name": "test-continuous-reading.mjs",
+        "code": 0,
+        "ms": 23897
+      },
+      {
+        "name": "test-backups.mjs",
+        "code": 0,
+        "ms": 13281
+      },
+      {
+        "name": "test-chapter-cache.mjs",
+        "code": 0,
+        "ms": 238
+      },
+      {
+        "name": "test-chapter-layout.mjs",
+        "code": 0,
+        "ms": 8301
+      },
+      {
+        "name": "test-app-update.mjs",
+        "code": 0,
+        "ms": 11247
+      },
+      {
+        "name": "test-reading-controls.mjs",
+        "code": 0,
+        "ms": 23893
+      },
+      {
+        "name": "test-large-txt.mjs",
+        "code": 0,
+        "ms": 16821
+      },
+      {
+        "name": "test-covers.mjs",
+        "code": 0,
+        "ms": 11106
+      },
+      {
+        "name": "test-scroll-performance.mjs",
+        "code": 0,
+        "ms": 17823
+      },
+      {
+        "name": "test-themes.mjs",
+        "code": 0,
+        "ms": 18773
+      },
+      {
+        "name": "test-official-tts.mjs",
+        "code": 0,
+        "ms": 15376
+      },
+      {
+        "name": "test-reader-features.mjs",
+        "code": 0,
+        "ms": 13449
+      }
+    ]
+  },
+  "rust": {
+    "passed": 74,
+    "failed": 0,
+    "ignored": 4
+  },
+  "native": {
+    "bookId": "7611433607134972990",
+    "uploadCalls": 0,
+    "firstOpenMs": 11658,
+    "afterProcessRestartMs": 4573,
+    "restartChapterRequests": 0,
+    "nativeNetworkFailureConfirmed": true,
+    "offlineOpenMs": 5484,
+    "offlineChapterRequests": 0
+  },
+  "benchmark": {
+    "samplesPerVersion": 1,
+    "before": {
+      "label": "deep-before-known-recheck",
+      "version": "v0.5.24",
+      "firstShelfMs": 4977,
+      "firstCoverMs": 5212,
+      "fullShelfMs": 10296,
+      "openFeedbackMs": 32,
+      "openTextMs": 9149,
+      "openAccountCalls": 0,
+      "coverCalls": 15,
+      "coverDiskHits": 0,
+      "uploadCalls": 0,
+      "coverErrors": [],
+      "warmReadMs": 4573,
+      "warmChapterRequests": 1,
+      "warmUploadCalls": 0
+    },
+    "after": {
+      "label": "deep-after-known",
+      "version": "v0.5.25",
+      "firstShelfMs": 4897,
+      "firstCoverMs": 5563,
+      "fullShelfMs": 9695,
+      "openFeedbackMs": 40,
+      "openTextMs": 9183,
+      "openAccountCalls": 0,
+      "coverCalls": 15,
+      "coverDiskHits": 0,
+      "uploadCalls": 0,
+      "coverErrors": [],
+      "warmReadMs": 3521,
+      "warmChapterRequests": 0,
+      "warmUploadCalls": 0
+    }
+  },
+  "binaries": {
+    "Moyu-Reader-0.5.25.exe": {
+      "bytes": 8283648,
+      "sha256": "9f7379f1b50447f0e7018aa370d85453f9d9c9699144be3b90dedfda9035ef77"
+    },
+    "Moyu-Reader-0.5.25-x64-setup.exe": {
+      "bytes": 8531675,
+      "sha256": "273df2a06470d3bcea1054fefca3a8492a6b01c43ea5d767c0e21f48cb9b8bbc"
+    }
+  },
+  "limitations": [
+    "No in-place install or live online installer update was performed.",
+    "Real AI/recorded voice playback was not rechecked; controlled media tests cover retry behavior.",
+    "Earlier failed attempts are retained privately and described in TEST_REPORT-0.5.25.md."
+  ]
+}

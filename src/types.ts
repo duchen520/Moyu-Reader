@@ -15,6 +15,7 @@ export interface Book {
   source: 'demo' | 'local' | 'official';
   coverStyle: number;
   coverUrl?: string;
+  metadataWarning?: string;
   chapters: Chapter[];
   addedAt: number;
 }
