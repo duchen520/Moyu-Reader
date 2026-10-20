@@ -70,6 +70,16 @@ try {
   assert.equal((await ttsCalls())[0].args.toneId, '74');
   assert.ok((await player.getAttribute('src')).startsWith('blob:'));
   check(`${realFixture ? 'Real official AI chapter' : 'Generated test'} audio decodes and plays through the media element`);
+  const beforeDecoderRetry = (await ttsCalls()).length;
+  await player.evaluate(a => new Promise(resolve => {
+    const bad = URL.createObjectURL(new Blob(['corrupt audio fixture'], { type: 'audio/mp4' }));
+    a.addEventListener('error', () => { URL.revokeObjectURL(bad); resolve(); }, { once: true });
+    a.src = bad; a.load();
+  }));
+  await page.getByText('本章AI音频播放失败，请重试加载。', { exact: true }).waitFor();
+  await play(); await running();
+  assert.equal((await ttsCalls()).length, beforeDecoderRetry + 1);
+  check('Playback after a decoder error fetches fresh audio instead of repeatedly resuming the failed source');
   await player.evaluate(a => { a.currentTime = 8; });
   await page.getByRole('button', { name: '暂停AI朗读', exact: true }).click();
   assert.ok(await player.evaluate(a => a.paused));

@@ -61,7 +61,17 @@ try {
   check('Startup backs up full local text, official catalogs, progress and preferences while excluding cached official text and extra private fields');
   await settings(p);
   await p.getByRole('button', { name: '增大字体', exact: true }).click();
+  await p.evaluate(() => {
+    window.__fileText = File.prototype.text;
+    File.prototype.text = async function() { await new Promise(resolve => window.__releaseImport = resolve); return window.__fileText.call(this); };
+  });
   await p.locator('input[type=file]').setInputFiles({ name: '恢复前新增.txt', mimeType: 'text/plain', buffer: Buffer.from('第一章 新书\n这本书必须在原数据库和恢复前快照中保留。') });
+  await p.waitForFunction(() => !!window.__releaseImport);
+  await restoreButton(p, id).click();
+  await p.getByText('书籍仍在导入，请等待导入保存完成后再恢复。', { exact: true }).waitFor();
+  assert.equal(await p.evaluate(() => localStorage.getItem('tomato-reader-v01:restored-state')), null);
+  await p.evaluate(() => { File.prototype.text = window.__fileText; window.__releaseImport(); });
+  check('Restoring cannot interrupt a file that is still being imported');
   await p.waitForFunction(() => document.querySelectorAll('.book-card').length === 3);
   await settings(p);
   await p.getByRole('button', { name: '刷新备份列表', exact: true }).click();
@@ -108,13 +118,23 @@ try {
   check('The startup error screen can recover into a fresh database while the original database remains unreadable and legacy data is retained');
   await broken.close();
   const invalidPrefs = await fixture(false, true);
-  await invalidPrefs.getByRole('heading', { name: '应用遇到意外错误', exact: true }).waitFor();
+  await invalidPrefs.locator('.book-card').first().waitFor();
+  await settings(invalidPrefs);
+  await invalidPrefs.getByRole('alert').filter({ hasText: '部分设置或进度格式异常' }).waitFor();
+  const backupCount = records.length;
+  await invalidPrefs.evaluate(() => localStorage.setItem('tomato-reader-v01:preferences', JSON.stringify({ fontSize: 999 })));
+  const invalidBackup = await invalidPrefs.evaluate(async () => {
+    try { await (await import('/src/lib/backups.ts')).createBackup('auto'); return 'unexpected success'; }
+    catch (error) { return String(error); }
+  });
+  assert.match(invalidBackup, /旧备份已保留/);
+  assert.equal(records.length, backupCount, 'Invalid known fields cannot silently replace healthy backups with defaults');
   await restoreButton(invalidPrefs, id).waitFor();
   invalidPrefs.once('dialog', dialog => dialog.accept());
   await restoreButton(invalidPrefs, id).click();
   await invalidPrefs.locator('.book-card').first().waitFor();
   assert.equal(await invalidPrefs.locator('.book-card').count(), 2);
-  check('Malformed preferences keep the fallback window usable and can be recovered from the error screen');
+  check('Malformed preferences retain a usable shelf and can be recovered from settings without replacing the original records');
   assert.deepEqual(errors, []);
   console.log(`${passed} backup/recovery checks passed with actual IndexedDB and a mocked disk bridge.`);
 } finally { await browser?.close(); server.kill(); }

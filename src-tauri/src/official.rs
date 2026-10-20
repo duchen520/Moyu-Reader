@@ -134,6 +134,19 @@ fn business(j: &Value) -> Result<(), String> {
         None => Err("官方接口缺少有效状态码，当前响应未确认成功".into()),
     }
 }
+fn book_metadata_or_fallback(id: &str, response: Result<Value, String>) -> Value {
+    let metadata = response.and_then(|j| {
+        business(&j)?;
+        let raw = &j["data"];
+        let returned = sid(raw.get("bookId").or_else(||raw.get("book_id")).unwrap_or(&Value::Null));
+        if !returned.is_empty() && returned != id { return Err("官方书名资料与作品不匹配".into()); }
+        let title = raw["bookName"].as_str().or_else(||raw["book_name"].as_str()).filter(|s| !s.trim().is_empty()).ok_or("官方未返回书名资料")?;
+        Ok(json!({"id":id,"title":title,"author":raw["author"].as_str().or_else(||raw["authorName"].as_str()).unwrap_or(""),
+            "description":raw["abstract"].as_str().unwrap_or(""),"coverUrl":cover_url(raw)}))
+    });
+    metadata.unwrap_or_else(|_| json!({"id":id,"title":format!("官方作品 {id}"),"author":"","description":"","coverUrl":"",
+        "metadataWarning":"书名资料暂未取得，已按作品 ID 打开；目录和正文仍会核对。"}))
+}
 async fn request(
     session: &Session,
     method: Method,
@@ -753,13 +766,10 @@ impl OfficialService {
         };
         let s = self.read_session().await;
         let d = if let Some(info) = cached { info } else {
-            let j = request(&s, Method::GET, &format!("/api/book/info?bookId={id}"), None).await?;
-            business(&j)?;
-            let raw = &j["data"];
-            let info = json!({"id":id,"title":raw["bookName"].as_str().or_else(||raw["book_name"].as_str()).unwrap_or("番茄小说"),
-                "author":raw["author"].as_str().or_else(||raw["authorName"].as_str()).unwrap_or(""),
-                "description":raw["abstract"].as_str().unwrap_or(""),"coverUrl":cover_url(raw)});
-            self.remember_books(&[info.clone()]).await;
+            let response = request(&s, Method::GET, &format!("/api/book/info?bookId={id}"), None).await;
+            let info = book_metadata_or_fallback(id, response);
+            // A temporary ID label must not replace real search/shelf metadata.
+            if info.get("metadataWarning").is_none() { self.remember_books(&[info.clone()]).await; }
             info
         };
         let directory = request(
@@ -799,7 +809,7 @@ impl OfficialService {
             json!({"id":id,"title":d["title"].as_str().unwrap_or("番茄小说"),
             "author":d["author"].as_str().unwrap_or(""),
             "description":d["description"].as_str().unwrap_or(""),"source":"official", "coverStyle":0,"coverUrl":cover_url(&d),"chapters":chapters,
-            "addedAt":0}),
+            "addedAt":0,"metadataWarning":d.get("metadataWarning")}),
         )
     }
     pub async fn chapter(&self, id: &str) -> Result<Value, String> {
@@ -1009,6 +1019,22 @@ fn normalize_audio_catalog(j: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_metadata_failure_cannot_block_a_separately_verified_catalog() {
+        for response in [Err("network unavailable".into()), Ok(json!({"code":-1,"data":{}})),
+            Ok(json!({"code":0,"data":{}})), Ok(json!({"code":0,"data":{"bookId":"654321","bookName":"wrong book"}}))] {
+            let info = book_metadata_or_fallback("123456", response);
+            assert_eq!(info["id"], "123456");
+            assert_eq!(info["title"], "官方作品 123456");
+            assert!(info["metadataWarning"].is_string());
+            assert_eq!(info["coverUrl"], "");
+        }
+        let info = book_metadata_or_fallback("123456", Ok(json!({"code":0,"data":{"bookId":"123456","bookName":"书名","authorName":"作者"}})));
+        assert_eq!(info["title"], "书名"); assert_eq!(info["author"], "作者");
+        assert!(info.get("metadataWarning").is_none());
+        // Optional metadata never authorizes a failed directory response.
+        assert!(business(&json!({"code":-1,"data":{"chapterListWithVolume":[]}})).is_err());
+    }
     #[test]
     fn audio_catalog_keeps_ai_when_recorded_list_is_null() {
         let value = json!({"code":0,"data":{"audio_tones":null,"tts_tones":[{"id":74,"title":"成熟大叔音升级版"},{"id":"1","title":"甜美少女音"}]}});

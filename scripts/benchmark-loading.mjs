@@ -31,10 +31,16 @@ try{
  result.firstCoverMs=loaded?Date.now()-started:null;
  await page.getByRole('button',{name:'刷新官方书架',exact:true}).waitFor({timeout:60000});result.fullShelfMs=Date.now()-started;
  await page.locator('.side-nav button').filter({hasText:'找书发现'}).click();
- await page.getByLabel('搜索正版小说').fill('这个游戏不对劲 我挖矿成神');
- await page.getByRole('button',{name:'搜索小说',exact:true}).click();await page.locator('.search-open-btn').first().waitFor({timeout:30000});
+ if(process.env.TOMATO_PERF_BOOK){
+  await page.getByRole('button',{name:'通过番茄链接或书籍ID直接打开作品'}).click();
+  await page.getByLabel('打开正版作品').fill(process.env.TOMATO_PERF_BOOK);
+ }else{
+  await page.getByLabel('搜索正版小说').fill('这个游戏不对劲 我挖矿成神');
+  await page.getByRole('button',{name:'搜索小说',exact:true}).click();await page.locator('.search-open-btn').first().waitFor({timeout:30000});
+ }
  const before=await page.evaluate(()=>window.__benchCalls.length);const openStarted=Date.now();
- await page.locator('.search-open-btn').first().click();
+ if(process.env.TOMATO_PERF_BOOK)await page.getByRole('button',{name:'打开作品',exact:true}).click();
+ else await page.locator('.search-open-btn').first().click();
  result.openFeedbackMs=await page.locator('.opening-screen').count()?Date.now()-openStarted:null;
  await page.locator('.story-content p').first().waitFor({timeout:60000});result.openTextMs=Date.now()-openStarted;
  assert.ok((await page.locator('.sync-bar').textContent()).includes('自动上传已关闭'));
@@ -43,11 +49,18 @@ try{
  result.uploadCalls=calls.filter(c=>c.cmd==='official_sync_progress').length;result.coverErrors=calls.filter(c=>c.error).map(c=>c.error);assert.equal(result.uploadCalls,0);
  await mkdir('test-output',{recursive:true});await writeFile(`test-output/loading-benchmark-${label}.json`,JSON.stringify(result,null,2));
  if(process.env.TOMATO_PERF_WARM==='1'){
-  const warmStarted=Date.now();await page.reload();await page.locator('.book-cover img[data-cover-source="disk"]').first().waitFor({timeout:15000});
-  await page.locator('.book-cover img[data-cover-source="disk"]').first().evaluate(img=>img.decode());
-  assert.ok(await page.locator('.book-cover img[data-cover-source="disk"]').first().evaluate(img=>img.naturalWidth>0));
-  result.warmCoverReloadMs=Date.now()-warmStarted;result.coverDiskSurvivesReload=true;
+  // This book may not have been visible in the initial cloud shelf, so its
+  // cover's first appearance is not a disk-cache performance measurement.
+  await page.reload();await page.locator('.book-card .book-cover').first().waitFor();
+  await observe();
+  const readStarted=Date.now();await page.locator('.book-card .book-cover').first().click();
+  await page.locator('.story-content p').first().waitFor({timeout:60000});
+  result.warmReadMs=Date.now()-readStarted;
+  const warmCalls=await page.evaluate(()=>window.__benchCalls);
+  result.warmChapterRequests=warmCalls.filter(c=>c.cmd==='official_chapter').length;
+  result.warmUploadCalls=warmCalls.filter(c=>c.cmd==='official_sync_progress').length;
+  assert.equal(result.warmUploadCalls,0);
  }
  await mkdir('test-output',{recursive:true});await writeFile(`test-output/loading-benchmark-${label}.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result));
-}catch(error){if(page)await page.screenshot({path:`test-output/loading-benchmark-${label}-failure.png`}).catch(()=>{});throw error;}
+}catch(error){result.error=error.message;await mkdir('test-output',{recursive:true});await writeFile(`test-output/loading-benchmark-${label}.json`,JSON.stringify(result,null,2));if(page)await page.screenshot({path:`test-output/loading-benchmark-${label}-failure.png`}).catch(()=>{});throw error;}
 finally{await browser?.close().catch(()=>{});app.kill();}

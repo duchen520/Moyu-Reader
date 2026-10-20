@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { backupStatus, createBackup, listBackups, restoreBackup } from '../lib/backups';
 import type { BackupInfo } from '../lib/backups';
 
-export function BackupPanel({ healthy = true }: { healthy?: boolean }) {
+export function BackupPanel({ healthy = true, beforeRestore }: { healthy?: boolean; beforeRestore?: () => void }) {
   const [items, setItems] = useState<BackupInfo[]>([]), [path, setPath] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [status, setStatus] = useState(backupStatus);
   const refresh = async () => {
@@ -17,7 +17,9 @@ export function BackupPanel({ healthy = true }: { healthy?: boolean }) {
     finally { setBusy(false); }
   };
   const restore = async (item: BackupInfo) => {
-    if (!window.confirm(`恢复 ${new Date(item.createdAt).toLocaleString()} 的备份（${item.books} 本书）？\n\n${healthy ? '会先备份当前资料，再切换到备份中的书架、进度和设置。' : '会创建新的书架副本，保留当前无法读取的原数据库。'}\n恢复后云端自动上传会关闭，需要你重新开启。`)) return;
+    try { beforeRestore?.(); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); return; }
+    if (!window.confirm(`恢复 ${new Date(item.createdAt).toLocaleString()} 的备份（${item.books} 本书）？\n\n${healthy ? '会先备份当前资料，再切换到备份中的书架、进度和设置。' : '会创建新的书架副本，保留当前原始资料。'}\n恢复后云端自动上传会关闭，需要你重新开启。`)) return;
     setBusy(true); setError('');
     try { await restoreBackup(item.id, healthy); window.location.reload(); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }

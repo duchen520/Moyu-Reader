@@ -3879,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "tomato-reader"
-version = "0.5.24"
+version = "0.5.25"
 dependencies = [
  "aes",
  "base64 0.22.1",

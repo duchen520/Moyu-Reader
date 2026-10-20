@@ -31,7 +31,7 @@ async function fixture(official = false) {
       if (command === 'official_chapter') {
         window.__requests.push(args.id);
         if (args.id === window.__hold) await new Promise(resolve => { window.__release = resolve; });
-        await new Promise(resolve => setTimeout(resolve, 60));
+        if (!window.__instantChapter) await new Promise(resolve => setTimeout(resolve, 60));
         if (args.id === window.__fail) throw Error('测试正文加载失败');
         return { id: args.id, title: book.chapters.find(c => c.id === args.id).title, loaded: true, content: content.split('\n\n').map(p => `<p>${p}</p>`).join('') };
       }
@@ -196,6 +196,23 @@ try {
   await o.locator('[data-chapter-index="147"] .story-content').waitFor();
   assert.ok(await o.evaluate(() => window.__requests.filter(id => id === 'continuous-147').length >= 2));
   check('Long continuous reading retains at most 24 cached official bodies and re-fetches an evicted chapter without losing its directory position');
+  const race = await fixture(true);
+  await race.evaluate(() => { window.__hold = 'continuous-146'; });
+  await enable(race);
+  await race.waitForFunction(() => window.__release && document.querySelector('[data-chapter-index="148"] .story-content'));
+  const expectedTop = await race.evaluate(() => {
+    const canvas = document.querySelector('.reading-canvas');
+    canvas.scrollTop += 300;
+    const top = document.querySelector('[data-chapter-index="147"]').getBoundingClientRect().top;
+    window.__instantChapter = true; window.__release();
+    return top;
+  });
+  await race.locator('[data-chapter-index="146"] .story-content').waitFor();
+  await race.waitForTimeout(100);
+  const actualTop = await race.locator('[data-chapter-index="147"]').evaluate(el => el.getBoundingClientRect().top);
+  assert.ok(Math.abs(actualTop - expectedTop) < 2, `Pending user scroll was lost: expected ${expectedTop}, actual ${actualTop}`);
+  await race.close();
+  check('A preceding chapter completing before the scroll event cannot undo newly applied user movement');
   await mkdir('test-output', { recursive: true });
   await o.screenshot({ path: 'test-output/continuous-reading.png' });
   assert.deepEqual(errors, []);

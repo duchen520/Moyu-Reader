@@ -15,7 +15,7 @@ try{
  const invoke=(command,args)=>page.evaluate(async({command,args})=>{try{return {ok:true,value:await window.__TAURI_INTERNALS__.invoke(command,args)};}catch(e){return {ok:false,error:String(e)};}},{command,args});
  let id=process.env.TOMATO_CHAPTER_BOOK;
  if(!id){const search=await invoke('official_search',{keyword:process.env.TOMATO_CHAPTER_SEARCH||'巴菲特致股东的信',offset:0});if(!search.ok)throw Error(search.error);console.log('SEARCH',JSON.stringify(search.value.books.map(({id,title})=>({id,title}))));
- const match=search.value.books.find(b=>b.title.includes('第4版'));if(!match)throw Error('Set TOMATO_CHAPTER_BOOK to the intended edition');id=match.id;}
+ const match=search.value.books.find(b=>b.title.includes(process.env.TOMATO_CHAPTER_MATCH||'第4版'));if(!match)throw Error('Set TOMATO_CHAPTER_BOOK to the intended edition');id=match.id;}
  const book=await invoke('official_book',{id});if(!book.ok)throw Error(book.error);
  if(process.env.TOMATO_CHAPTER_CATALOG==='1')await writeFile(`test-output/chapter-catalog-${id}.json`,JSON.stringify(book.value.chapters.map(({id,title})=>({id,title}))));
  console.log('BOOK',JSON.stringify({id,title:book.value.title,count:book.value.chapters.length,chapters:book.value.chapters.slice(0,5).map(({id,title})=>({id,title}))}));

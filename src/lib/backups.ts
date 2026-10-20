@@ -11,6 +11,7 @@ type Kind = 'auto' | 'manual' | 'before-update' | 'before-restore';
 const native = () => typeof Reflect.get(window, '__TAURI_INTERNALS__')?.invoke === 'function';
 let queue: Promise<unknown> = Promise.resolve();
 let restoring = false;
+export const isRestoring = () => restoring;
 let revision = 1, savedRevision = 0;
 let latestInfo: BackupInfo | null = null;
 let lastStatus = '启动后自动备份，阅读期间每 5 分钟保存一次有变化的资料。';
@@ -47,10 +48,7 @@ export function validateBackup(raw: unknown): BackupPayload {
 }
 function snapshot(): BackupPayload {
   // Never silently replace a previously healthy backup with a parse fallback.
-  if (!restoredState()) for (const key of ['progress', 'preferences']) {
-    const raw = localStorage.getItem('tomato-reader-v01:' + key);
-    if (raw) { const value = JSON.parse(raw); if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('本机进度或设置格式异常，旧备份已保留。'); }
-  }
+  if (!storage.profileHealthy()) throw Error('本机进度或设置格式异常，旧备份已保留。');
   return validateBackup({ schema: 1, version: CURRENT_VERSION, books: storage.books().filter(b => b.source !== 'demo'), preferences: storage.preferences(), progress: storage.progress() });
 }
 export function createBackup(kind: Kind): Promise<BackupInfo> {
@@ -75,6 +73,7 @@ export function startAutoBackups() {
   let booksTimer: ReturnType<typeof setTimeout> | undefined;
   const auto = () => { if (native() && !restoring && revision !== savedRevision) void createBackup('auto').catch(() => {}); };
   const changed = (event: Event) => {
+    if ((event as CustomEvent).detail === 'cache') return;
     revision++;
     if ((event as CustomEvent).detail === 'books') { clearTimeout(booksTimer); booksTimer = setTimeout(auto, 3000); }
   };

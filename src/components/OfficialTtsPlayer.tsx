@@ -175,7 +175,7 @@ export function OfficialTtsPlayer(props: Props) {
         }
         if (Date.now() - savedAt.current > 1000) { savedAt.current = Date.now(); save(); }
       }}
-      onError={() => { if (objectUrl.current) { pendingPlay.current = false; setPlaying(false); setError('本章AI音频播放失败，请重试加载。'); latest.current.onPlaybackStateChange?.(false); } }}
+      onError={() => { if (objectUrl.current) { ready.current = false; pendingPlay.current = false; setPlaying(false); setError('本章AI音频播放失败，请重试加载。'); latest.current.onPlaybackStateChange?.(false); } }}
       onEnded={() => {
         if (!ready.current || !audio.current?.ended || context.current?.chapterId !== latest.current.chapterId) return;
         save(); setPlaying(false); latest.current.onPlaybackStateChange?.(false);

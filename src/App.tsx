@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { importBook } from './lib/importBook';
 import { BackupPanel } from './components/BackupPanel';
-import { startAutoBackups } from './lib/backups';
+import { startAutoBackups, isRestoring } from './lib/backups';
 import { focusChapterCache, limitChapterCache, touchChapterCache } from './lib/chapterCache';
 import { SoftwareUpdate, useSoftwareUpdate } from './components/SoftwareUpdate';
 import { CURRENT_VERSION } from './lib/updater';
@@ -43,6 +43,8 @@ export default function App() {
   const [prefs, setPrefs] = useState<Preferences>(storage.preferences);
   const [progress, setProgress] = useState<Record<string, ReadingProgress>>(storage.progress);
   const [opening, setOpening] = useState<{ title: string; stage: string; error?: string; id?: string } | null>(null);
+  const [openingLocal, setOpeningLocal] = useState<{ book: Book; index: number; restore: boolean } | null>(null);
+  const [openingSlow, setOpeningSlow] = useState(false);
   const [screen, setScreen] = useState<Screen>('bookshelf');
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [readerChapter, setReaderChapter] = useState(0);
@@ -64,7 +66,7 @@ export default function App() {
   const [readHistory, setReadHistory] = useState<{ index: number; title: string }[] | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
   const [uploadConfirmation, setUploadConfirmation] = useState<{
-    generation: number; bookId: string; chapterId: string; chapterTitle: string;
+    generation: number; session: number; bookId: string; chapterId: string; chapterTitle: string;
     remoteId: string; remoteTimestamp: number; remoteTitle: string;
   } | null>(null);
   const importing = useRef(false);
@@ -73,19 +75,26 @@ export default function App() {
   const progressRef = useRef(progress);
   const cloudBaseline = useRef<Record<string, string>>({});
   const cloudVersions = useRef<Record<string, number>>({});
+  const verifiedCloudEntry = useRef<{ bookId: string; session: number } | null>(null);
   const autoUploadEnabled = useRef(!!prefs.autoUploadProgress);
   const autoUploadEpoch = useRef(0);
   autoUploadEnabled.current = !!prefs.autoUploadProgress;
   const syncInFlight = useRef(false);
   const readerEntryProgress = useRef<ReadingProgress | undefined>(undefined);
   const openGeneration = useRef(0);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() => storage.profileWarning() || null);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
   useEffect(startAutoBackups, []);
+  useEffect(() => {
+    setOpeningSlow(false);
+    if (screen !== 'opening' || !openingLocal || opening?.error) return;
+    const timer = window.setTimeout(() => setOpeningSlow(true), 1500);
+    return () => window.clearTimeout(timer);
+  }, [screen, openingLocal, opening?.error]);
   const update = useSoftwareUpdate(setNotice, () => { if (importing.current) throw Error('正在导入书籍，请稍后重试安装。'); });
   const fileInput = useRef<HTMLInputElement>(null);
   const activeBook = books.find(b => b.id === activeBookId) ?? null;
@@ -99,11 +108,13 @@ export default function App() {
 
   const navigate = (next: Screen) => {
     openGeneration.current++;
+    verifiedCloudEntry.current = null;
     setUploadConfirmation(null);
     setReadHistory(null);
     setConflict(null);
     setChapterLoading(false);
     setOpening(null);
+    setOpeningLocal(null);
     setScreen(next);
   };
 
@@ -158,12 +169,14 @@ export default function App() {
       try { await persistBooks([book]); } catch { flash('作品已打开，但书架保存失败，请释放本地存储空间后重新收藏。'); }
     }
     if (generation !== openGeneration.current) return;
+    setOpeningLocal(null); setOpening(null);
     setBooks(old => limitChapterCache(old.some(b => b.id === book.id) ? old.map(b => b.id === book.id ? book : b) : [...old, book]));
     readerEntryProgress.current = restoreLocal ? progressRef.current[book.id] : undefined;
     setActiveBookId(book.id);
     setReaderChapter(chapterIndex);
     setChapterError('');
     setScreen('reader');
+    if (book.metadataWarning) flash(book.metadataWarning);
   };
 
   const openBook = (book: Book) => {
@@ -175,6 +188,8 @@ export default function App() {
 
   const openOfficialBook = async (book: Book) => {
     const generation = ++openGeneration.current;
+    verifiedCloudEntry.current = null;
+    setOpeningLocal(null);
     setUploadConfirmation(null); setConflict(null);
     setSyncStatus('正在核对云端进度，自动上传暂停…');
     setOpening({ title: book.title, stage: '正在读取作品目录…' });
@@ -183,8 +198,9 @@ export default function App() {
     // No reader/automatic upload exists until progress is resolved or failed.
     const cloud = (async () => {
       const user = await account.getUser();
+      const session = account.sessionVersion();
       const list = user ? await official.readProgress() : null;
-      return { user, list };
+      return { user, list, session };
     })().then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
 
     // If chapters are not yet loaded (e.g. from discovery or rankings), fetch them
@@ -221,13 +237,15 @@ export default function App() {
 
     const local = progressRef.current[loadedBook.id];
     let index = Math.max(0, Math.min(local?.chapterIndex ?? 0, Math.max(0, loadedBook.chapters.length - 1)));
+    setOpeningLocal({ book: loadedBook, index, restore: !!local });
     try {
       if (generation !== openGeneration.current) return;
       setOpening({ title: loadedBook.title, stage: '正在核对云端阅读位置…' });
       const result = await cloud;
       if (!result.ok) throw result.error;
-      const { user, list } = result.value;
+      const { user, list, session } = result.value;
       if (generation !== openGeneration.current) return;
+      if (session !== account.sessionVersion()) throw Error('账号已变化，请重新读取当前账号的进度。');
       setOfficialUser(user);
       if (user) {
         if (!Array.isArray(list)) throw new Error('官方进度格式已变化，自动同步暂停。');
@@ -237,7 +255,9 @@ export default function App() {
         cloudVersions.current[loadedBook.id] = remote?.read_timestamp ?? 0;
         const cloudIndex = remote ? loadedBook.chapters.findIndex(c => c.id === String(remote.item_id)) : -1;
         if (remote && cloudIndex < 0) throw new Error('云端章节不在当前目录中，自动同步暂停，请先检查官网。');
+        if (remote) verifiedCloudEntry.current = { bookId: loadedBook.id, session };
         if (cloudIndex >= 0 && local && index !== cloudIndex) {
+          setOpeningLocal(null);
           setConflict({ book: loadedBook, local: index, cloud: cloudIndex, cloudUpdatedAt: remote?.read_timestamp }); return;
         }
         if (cloudIndex >= 0) index = cloudIndex;
@@ -249,6 +269,14 @@ export default function App() {
       setSyncStatus(`云端读取失败，自动同步暂停：${errorMessage(e)}`);
     }
     if (generation === openGeneration.current) enterBook(loadedBook, index, !!local && local.chapterIndex === index);
+  };
+
+  const continueLocal = () => {
+    if (!openingLocal) return;
+    openGeneration.current++;
+    verifiedCloudEntry.current = null;
+    setSyncStatus('尚未核对云端进度 · 自动上传暂停；可稍后点击“读取云端进度”。');
+    void enterBook(openingLocal.book, openingLocal.index, openingLocal.restore);
   };
 
   const openBookById = async (id: string, title?: string, coverUrl?: string) => {
@@ -374,6 +402,7 @@ export default function App() {
       const currentFocus = chapterContext.current;
       focusChapterCache(currentFocus.screen === 'reader' ? currentFocus.bookId ?? null : null, currentFocus.index);
       setBooks(old => limitChapterCache(old.map(b => b.id === book.id ? { ...b, chapters: b.chapters.map(c => c.id === target.id ? { ...c, ...loaded, title: loaded.title || c.title } : c) } : b)));
+      void storage.cacheChapter(book.id, loaded).catch(() => flash('正文已读取，但离线缓存保存失败，请检查本机可用空间。'));
       } finally {
         const next = chapterSlots.current.waiting.shift();
         if (next) next(); else chapterSlots.current.active--;
@@ -404,17 +433,18 @@ export default function App() {
   const prepareUpload = async () => {
     if (screen !== 'reader' || activeBook?.source !== 'official' || !chapter?.loaded || refreshInFlight.current || syncInFlight.current || conflict || readHistory || historyBusy || uploadConfirmation) return;
     const generation = openGeneration.current, book = activeBook, currentChapter = chapter;
+    const session = account.sessionVersion();
     syncInFlight.current = true; setUploadBusy(true);
     try {
       const list = await official.readProgress();
-      if (generation !== openGeneration.current || syncContext.current.chapterId !== currentChapter.id) return;
+      if (generation !== openGeneration.current || session !== account.sessionVersion() || syncContext.current.chapterId !== currentChapter.id) return;
       if (!Array.isArray(list)) throw new Error('官方进度格式已变化');
       const remote = list.find(p => String(p.book_id) === book.id);
       const remoteId = remote ? String(remote.item_id) : '';
       const remoteTitle = book.chapters.find(c => c.id === remoteId)?.title;
       if (remoteId && !remoteTitle) throw new Error('官网记录不在当前目录中，未上传本机进度');
       setUploadConfirmation({
-        generation, bookId: book.id, chapterId: currentChapter.id,
+        generation, session, bookId: book.id, chapterId: currentChapter.id,
         chapterTitle: currentChapter.title, remoteId, remoteTimestamp: remote?.read_timestamp ?? 0,
         remoteTitle: remoteTitle ?? '官网未返回记录',
       });
@@ -426,12 +456,13 @@ export default function App() {
     setUploadConfirmation(null);
     if (screen !== 'reader' || !activeBook || activeBook.source !== 'official' || !chapter?.loaded || refreshInFlight.current || conflict || syncInFlight.current) return;
     const generation = openGeneration.current;
-    if (confirmation.generation !== generation || confirmation.bookId !== activeBook.id || confirmation.chapterId !== chapter.id) {
+    if (confirmation.generation !== generation || confirmation.session !== account.sessionVersion() || confirmation.bookId !== activeBook.id || confirmation.chapterId !== chapter.id) {
       setSyncStatus('当前书籍或章节已改变，请重新核对后上传'); return;
     }
     syncInFlight.current = true; setUploadBusy(true);
     const bookId = activeBook.id, chapterId = chapter.id, index = readerChapter;
-    const isCurrent = () => generation === openGeneration.current && syncContext.current.screen === 'reader' && syncContext.current.bookId === bookId;
+    const session = confirmation.session;
+    const isCurrent = () => generation === openGeneration.current && session === account.sessionVersion() && syncContext.current.screen === 'reader' && syncContext.current.bookId === bookId;
     const isChapterCurrent = () => isCurrent() && syncContext.current.chapterId === chapterId;
     setSyncStatus('正在验证并同步本章进度…');
     try {
@@ -447,6 +478,7 @@ export default function App() {
       if (remoteId !== chapterId) await official.syncProgress(bookId, chapterId, index);
       if (!isCurrent()) return;
       cloudBaseline.current[bookId] = chapterId;
+      verifiedCloudEntry.current = { bookId, session: account.sessionVersion() };
       // Read back the timestamp on the next automatic attempt after a manual upload.
       delete cloudVersions.current[bookId];
       if (isChapterCurrent()) setSyncStatus('官网已确认本章记录 · 手机端位置仍需核对');
@@ -465,9 +497,11 @@ export default function App() {
       return;
     }
     refreshInFlight.current = true; setCloudRefreshing(true);
+    verifiedCloudEntry.current = null;
+    const session = account.sessionVersion();
     const generation = ++openGeneration.current;
     const book = activeBook, index = readerChapter;
-    const valid = () => generation === openGeneration.current && syncContext.current.screen === 'reader' && syncContext.current.bookId === book.id;
+    const valid = () => generation === openGeneration.current && session === account.sessionVersion() && syncContext.current.screen === 'reader' && syncContext.current.bookId === book.id;
     try {
       const list = await official.readProgress();
       if (!valid()) return;
@@ -485,6 +519,7 @@ export default function App() {
       const changed = cloudBaseline.current[book.id] !== remoteId;
       cloudBaseline.current[book.id] = remoteId;
       cloudVersions.current[book.id] = remote.read_timestamp;
+      verifiedCloudEntry.current = { bookId: book.id, session };
       setSyncStatus(`官网记录：${book.chapters[cloudIndex].title} · 记录时间：${cloudTime(remote.read_timestamp)}`);
       if (syncContext.current.chapterId !== remoteId && (changed || manual)) {
         const currentIndex = book.chapters.findIndex(c => c.id === syncContext.current.chapterId);
@@ -501,11 +536,13 @@ export default function App() {
   useEffect(() => {
     if (!prefs.autoUploadProgress || screen !== 'reader' || activeBook?.source !== 'official' ||
       !officialUser || !chapter?.loaded || !chapter.content || chapterLoading || chapterError ||
+      verifiedCloudEntry.current?.bookId !== activeBook.id || verifiedCloudEntry.current.session !== account.sessionVersion() ||
       conflict || uploadConfirmation || readHistory || historyBusy) return;
     const book = activeBook, currentChapter = chapter, index = readerChapter;
     const generation = openGeneration.current, epoch = autoUploadEpoch.current;
     let cancelled = false;
     const valid = () => !cancelled && autoUploadEnabled.current && epoch === autoUploadEpoch.current &&
+      verifiedCloudEntry.current?.bookId === book.id && verifiedCloudEntry.current.session === account.sessionVersion() &&
       generation === openGeneration.current && syncContext.current.screen === 'reader' &&
       syncContext.current.bookId === book.id && syncContext.current.chapterId === currentChapter.id &&
       document.visibilityState === 'visible' && document.hasFocus();
@@ -576,6 +613,7 @@ export default function App() {
 
   const handleImportFiles = async (files: File[]) => {
     if (!files.length) return;
+    if (isRestoring()) { flash('正在恢复资料，请等待完成后再导入书籍。'); return; }
     if (importing.current) { flash('正在导入文件，请等待本次保存完成。'); return; }
     importing.current = true; setImportBusy(true);
     try {
@@ -744,7 +782,7 @@ export default function App() {
           <section className="opening-screen" aria-busy={!opening.error}>
             <button className="secondary-button" onClick={() => navigate('bookshelf')}><ArrowLeft size={16}/>返回书架</button>
             <div className="opening-card"><div className="eyebrow">正在打开作品</div><h1>{opening.title}</h1>
-              {opening.error ? <><p role="alert">{opening.error}</p>{opening.id && <button className="primary-button" onClick={() => void openBookById(opening.id!, opening.title)}>重试打开</button>}<button className="primary-button" onClick={() => navigate('discovery')}>返回找书</button></> : <><p role="status">{opening.stage}</p><div className="opening-skeleton" aria-hidden="true">{[1,2,3,4,5].map(i => <span key={i}/>)}</div></>}
+              {opening.error ? <><p role="alert">{opening.error}</p>{opening.id && <button className="primary-button" onClick={() => void openBookById(opening.id!, opening.title)}>重试打开</button>}<button className="primary-button" onClick={() => navigate('discovery')}>返回找书</button></> : <><p role="status">{opening.stage}</p><div className="opening-skeleton" aria-hidden="true">{[1,2,3,4,5].map(i => <span key={i}/>)}</div>{openingSlow && openingLocal && <><p>云端核对较慢。先阅读会暂停自动上传，云端位置可稍后再核对。</p><button className="primary-button" onClick={continueLocal}>{openingLocal.restore ? '先按本机进度阅读' : '先从第一章阅读'}</button></>}</>}
             </div>
           </section>
         ) : screen === 'reader' && activeBook && chapter ? (
@@ -823,7 +861,8 @@ export default function App() {
               <div className="eyebrow" style={{ marginTop: '28px' }}>SOFTWARE UPDATES</div>
               <h2>软件检查更新</h2>
               <p className="subheading">检查{APP_NAME}最新版本与功能升级。</p>
-              <BackupPanel />
+              {storage.profileWarning() && <p role="alert">{storage.profileWarning()}</p>}
+              <BackupPanel healthy={storage.profileHealthy()} beforeRestore={() => { if (importing.current) throw Error('书籍仍在导入，请等待导入保存完成后再恢复。'); }} />
               <SoftwareUpdate update={update} />
 
               <div className="settings-bottom-actions">

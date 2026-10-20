@@ -18,6 +18,10 @@ struct Structure {
     notes: i64,
     wrapped_paragraphs: i64,
     unwrapped_text_paragraphs: i64,
+    articles: i64,
+    article_depth: i64,
+    max_article_depth: i64,
+    malformed_articles: bool,
     invalid: bool,
 }
 #[derive(Default)]
@@ -36,6 +40,15 @@ impl TokenSink for Sink {
         if let Token::TagToken(tag) = token {
             let name = tag.name.as_ref();
             let mut state = self.0.borrow_mut();
+            if name == "article" {
+                if tag.kind == TagKind::StartTag {
+                    state.articles += 1;
+                    state.article_depth += 1;
+                    state.max_article_depth = state.max_article_depth.max(state.article_depth);
+                    if tag.self_closing { state.malformed_articles = true; }
+                } else if state.article_depth > 0 { state.article_depth -= 1; }
+                else { state.malformed_articles = true; }
+            }
             if matches!(name, "script" | "style" | "iframe" | "object" | "svg") {
                 state.invalid = true;
             }
@@ -99,7 +112,13 @@ pub(crate) fn validate(text: &str, expected: i64, free_paragraphs: Option<i64>) 
     // missing body paragraph could be mistaken for this format difference.
     let count_matches = expected == state.paragraphs
         || (state.headings == 1 && expected == state.paragraphs + 1
-            && free_paragraphs == Some(state.paragraphs));
+            && free_paragraphs == Some(state.paragraphs))
+        // Another observed template wraps the body in two nested articles and
+        // reports two extra layout units. Its independent free body count must
+        // still match every p exactly; arbitrary count differences are rejected.
+        || (state.headings == 1 && state.articles == 2 && state.max_article_depth == 2
+            && state.article_depth == 0 && !state.malformed_articles
+            && expected == state.paragraphs + 2 && free_paragraphs == Some(state.paragraphs));
     if expected <= 0 || !count_matches || state.paragraphs == 0 || state.invalid
         || !state.stack.is_empty()
         || free_paragraphs.is_some_and(|count|count != state.paragraphs)
@@ -219,6 +238,17 @@ mod tests {
         assert!(validate("<picture></picture>", 1, None).is_err());
     }
     #[test]
+    fn nested_article_count_requires_the_observed_layout_and_independent_body_count() {
+        let html = "<article><h1><blk>标题</blk></h1><article><p><blk>正文</blk></p></article></article>";
+        assert!(validate(html, 3, Some(1)).is_ok());
+        assert!(validate(html, 3, None).is_err());
+        assert!(validate(html, 3, Some(3)).is_err());
+        assert!(validate(html, 4, Some(1)).is_err());
+        assert!(validate(&html.replace("<article>", ""), 3, Some(1)).is_err());
+        assert!(validate(&html.replacen("</article>", "", 1), 3, Some(1)).is_err());
+        assert!(validate(&html.replace("<p><blk>正文</blk></p>", ""), 3, Some(1)).is_err());
+    }
+    #[test]
     fn missing_or_malformed_blocks_are_not_marked_complete() {
         for (html, count) in [
             ("<h1><blk>标题</blk></h1><p><blk>正文", 1),
@@ -249,7 +279,7 @@ mod tests {
             assert!(validate(&html.replacen("</blk>","",1),expected,free).is_err(), "unclosed block: {}",path.display());
             checked += 1;
         }
-        assert_eq!(checked, 15);
+        assert_eq!(checked, 18);
     }
     #[test]
     fn all_76_published_book_structures_pass_and_missing_paragraphs_fail() {

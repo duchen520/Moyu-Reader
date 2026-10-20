@@ -31,6 +31,11 @@ fn num(v: &Value) -> i64 {
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         .unwrap_or(0)
 }
+fn paragraph_count(value: Option<&Value>) -> Result<i64, String> {
+    value.and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| {
+        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
+    }))).filter(|n| *n >= 0).ok_or_else(|| "官方正文段落计数缺失或无效，未标记已读".into())
+}
 fn check(v: &str) -> Result<(), String> {
     if (5..=24).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit()) {
         Ok(())
@@ -272,7 +277,8 @@ impl AppContent {
         if text.is_empty() || text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c)) {
             return Err("本章正文不完整或编码不支持".into());
         }
-        let n = num(&d["paragraphs_num"]);
+        let n = paragraph_count(d.get("paragraphs_num"))?;
+        let free_paragraphs = d.get("free_para_nums").map(|v| paragraph_count(Some(v))).transpose()?;
         #[cfg(test)]
         if std::env::var("TOMATO_DIAGNOSE_CHAPTER").ok().is_some_and(|items|items.split(',').any(|id|id==item)) {
             let mut diagnostic = crate::chapter_html::diagnose(&text, n);
@@ -283,7 +289,7 @@ impl AppContent {
             diagnostic.as_object_mut().unwrap().remove("structuralHtml");
             println!("Chapter structure only: {}",diagnostic);
         }
-        crate::chapter_html::validate(&text, n, d.get("free_para_nums").map(num))?;
+        crate::chapter_html::validate(&text, n, free_paragraphs)?;
         Ok(
             json!({"id":item,"title":d["title"].as_str().unwrap_or(""),"content":text,"loaded":true,"itemVersion":id(d.get("item_version").unwrap_or(&meta["item_version"]))}),
         )
@@ -567,6 +573,15 @@ fn collect_images(v: &Value, depth: usize, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_or_invalid_paragraph_metadata_cannot_become_an_explicit_zero() {
+        assert!(paragraph_count(None).is_err());
+        for value in [Value::Null, json!(false), json!(-1), json!(0.5), json!("unknown"), json!(""), json!({})] {
+            assert!(paragraph_count(Some(&value)).is_err(), "{value}");
+        }
+        assert_eq!(paragraph_count(Some(&json!(0))).unwrap(), 0);
+        assert_eq!(paragraph_count(Some(&json!("59"))).unwrap(), 59);
+    }
     #[tokio::test]
     #[ignore = "Explicit read-only diagnosis of a user-reported free chapter"]
     async fn live_chapter_structure() {
